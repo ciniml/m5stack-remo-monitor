@@ -220,6 +220,10 @@ typedef enum lgfx_font_id_t
 typedef struct lgfx_target *lgfx_target_t;
 
 lgfx_target_t lgfx_c_setup(void);
+
+int32_t lgfx_c_width(lgfx_target_t target);
+int32_t lgfx_c_height(lgfx_target_t target);
+
 void lgfx_c_clear_rgb332(lgfx_target_t target, uint8_t color);
 void lgfx_c_clear_rgb888(lgfx_target_t target, uint32_t color);
 void lgfx_c_fill_rect_rgb332(lgfx_target_t target, int32_t left, int32_t top, int32_t width, int32_t height, uint8_t color);

@@ -66,7 +66,7 @@ impl Drop for Sprite {
     }
 }
 
-trait LgfxTarget {
+pub trait LgfxTarget {
     fn target(&self) -> lgfx_target_t;
 }
 
@@ -110,6 +110,23 @@ impl ColorRgb888 {
 impl Color for ColorRgb888 {
     fn as_u32(&self) -> u32 {
         self.raw & 0xffffff
+    }
+}
+
+pub trait Screen {
+    fn size(&self) -> (i32, i32);
+}
+impl<Target> Screen for Target
+where
+    Target: LgfxTarget,
+{
+    fn size(&self) -> (i32, i32) {
+        unsafe {
+            (
+                lgfx_c_width(self.target()),
+                lgfx_c_height(self.target()),
+            )
+        }
     }
 }
 
@@ -573,3 +590,43 @@ pub enum LgfxFontId {
     efontTW_24_bi = lgfx_font_id_t_efontTW_24_bi,
     efontTW_24_i = lgfx_font_id_t_efontTW_24_i,
 }
+
+pub struct LgfxTargetRef<'a, Target: LgfxTarget> {
+    target: &'a Target,
+}
+impl<'a, Target: LgfxTarget> LgfxTarget for LgfxTargetRef<'a, Target> {
+    fn target(&self) -> lgfx_target_t {
+        self.target.target()
+    }
+}
+impl<'a, Target: LgfxTarget> embedded_graphics::prelude::OriginDimensions for LgfxTargetRef<'a, Target> {
+    fn size(&self) -> embedded_graphics::prelude::Size {
+        let size = Screen::size(self);
+        embedded_graphics::prelude::Size::new(size.0 as u32, size.1 as u32)
+    }
+}
+impl<'a, Target: LgfxTarget> embedded_graphics::prelude::DrawTarget for LgfxTargetRef<'a, Target> {
+    type Color = embedded_graphics::pixelcolor::Rgb888;
+    type Error = core::convert::Infallible;
+    
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+        where
+            I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>> {
+        for embedded_graphics::Pixel(coord, color) in pixels.into_iter() {
+            self.draw_line(coord.x, coord.y, coord.x, coord.y, ColorRgb888::new(embedded_graphics::pixelcolor::IntoStorage::into_storage(color)));
+        }
+        Ok(())
+    }
+    fn fill_solid(&mut self, area: &embedded_graphics::primitives::Rectangle, color: Self::Color) -> Result<(), Self::Error> {
+        self.fill_rect(
+            area.top_left.x as i32,
+            area.top_left.y as i32,
+            area.size.width as i32,
+            area.size.height as i32,
+            ColorRgb888::new(embedded_graphics::pixelcolor::IntoStorage::into_storage(color)),
+        );
+        Ok(())
+    }
+}
+
+// TODO: ピクセルバッファを確保してpush imageするfill_contiguous実装を作る

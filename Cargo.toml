@@ -16,7 +16,15 @@ opt-level = "z"
 pio = ["esp-idf-sys/pio"]
 
 [dependencies]
+anyhow = "1"
+attohttpc = {version = "0.22.0", default-features = false, features = []}
+embedded-graphics = "0.7.1"
+embedded-hal = "=1.0.0-alpha.8"
+embedded-svc = {version = "0.22.1", features = ["experimental"]}
+esp-idf-hal = "0.38.1"
+esp-idf-svc = { version = "0.42.3", features = ["experimental"]}
 esp-idf-sys = { version = "0.31.9", features = ["binstart"] }
+log = "0.4.17"
 num_enum = "0.5.7"
 
 
