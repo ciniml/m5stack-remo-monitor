@@ -242,6 +242,9 @@ lgfx_target_t lgfx_c_create_sprite_static(lgfx_target_t target, int32_t w, int32
 void lgfx_c_push_sprite(lgfx_target_t target, int32_t x, int32_t y);
 void lgfx_c_delete_sprite(lgfx_target_t target);
 
+void lgfx_c_start_write(lgfx_target_t target);
+void lgfx_c_end_write(lgfx_target_t target);
+
 size_t lgfx_c_write(lgfx_target_t target, const uint8_t* buffer, size_t length);
 void lgfx_c_set_cursor(lgfx_target_t target, int32_t x, int32_t y);
 void lgfx_c_set_text_size(lgfx_target_t target, float sx, float sy);

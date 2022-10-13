@@ -15,7 +15,7 @@ const LOGO_PNG: &[u8; 9278] = include_bytes!(concat!(
 
 use lgfx::{DrawImage, DrawPrimitives, Gfx};
 
-use crate::lgfx::{DrawChars, FontManupulation};
+use crate::lgfx::{DrawChars, FontManupulation, LgfxDisplay};
 
 const WIFI_AP: &str = env!("WIFI_AP");
 const WIFI_PASS: &str = env!("WIFI_PASS");
@@ -28,29 +28,46 @@ fn main() -> anyhow::Result<()> {
 
     println!("Hello, world!");
     let gfx = Gfx::setup().unwrap();
-    gfx.fill_rect(0, 0, 32, 32, lgfx::ColorRgb332::new(0));
-    gfx.draw_png(LOGO_PNG)
-        .postion(32, 0)
-        .scale(0.8, 0.0)
-        .execute();
-    gfx.set_font(lgfx::LgfxFontId::Font4).unwrap();
-    gfx.set_text_size(2.0, 2.0);
-    gfx.draw_chars(
-        "Hello, Rust!",
-        0,
-        640,
-        lgfx::ColorRgb332::new(0),
-        lgfx::ColorRgb332::new(0xff),
-        1.0,
-        1.0,
-    );
-    gfx.draw_line(100, 600, 200, 700, lgfx::ColorRgb332::new(0));
-    let sprite = gfx.create_sprite(64, 64).unwrap();
+    let gfx_shared = gfx.as_shared();
+    {
+        let mut guard = gfx_shared.lock_without_auto_update();
+        guard.fill_rect(0, 0, 32, 32, lgfx::ColorRgb332::new(0));
+        guard.draw_png(LOGO_PNG)
+            .postion(32, 0)
+            .scale(0.8, 0.0)
+            .execute();
+            guard.set_font(lgfx::LgfxFontId::Font4).unwrap();
+        guard.set_text_size(2.0, 2.0);
+        guard.draw_chars(
+            "Hello, Rust!",
+            0,
+            640,
+            lgfx::ColorRgb332::new(0),
+            lgfx::ColorRgb332::new(0xff),
+            1.0,
+            1.0,
+        );
+        guard.draw_line(100, 600, 200, 700, lgfx::ColorRgb332::new(0));
+        
+        use embedded_graphics::prelude::*;
+        use embedded_graphics::primitives::*;
+        
+        let mut display = LgfxDisplay::new(&mut guard);
+        let border_stroke = PrimitiveStyleBuilder::new()
+            .stroke_color(RgbColor::BLACK)
+            .stroke_width(10)
+            .stroke_alignment(StrokeAlignment::Inside)
+            .build();
+        display.bounding_box()
+            .into_styled(border_stroke)
+            .draw(&mut display).unwrap();
+    }
+    let mut sprite = gfx.create_sprite(64, 64).unwrap();
     sprite.clear(lgfx::ColorRgb332::new(0xff));
     sprite.fill_rect(0, 0, 32, 32, lgfx::ColorRgb332::new(0));
     sprite.fill_rect(32, 32, 32, 32, lgfx::ColorRgb332::new(0));
-    sprite.push_sprite(0, 512);
-    sprite.push_sprite(512 - 64, 512);
+    sprite.push_sprite(&gfx, 0, 512);
+    sprite.push_sprite(&gfx, 512 - 64, 512);
 
     let peripherals = Peripherals::take().unwrap();
     let netif_stack = Arc::new(EspNetifStack::new()?);

@@ -24,6 +24,15 @@ int32_t lgfx_c_height(lgfx_target_t target) {
     return gfx->height();
 }
 
+void lgfx_c_start_write(lgfx_target_t target) {
+    auto gfx = reinterpret_cast<LovyanGFX*>(target);
+    gfx->startWrite();
+}
+void lgfx_c_end_write(lgfx_target_t target) {
+    auto gfx = reinterpret_cast<LovyanGFX*>(target);
+    gfx->endWrite();
+}
+
 void lgfx_c_clear_rgb332(lgfx_target_t target, uint8_t color) {
     auto gfx = reinterpret_cast<LovyanGFX*>(target);
     gfx->clear(color);

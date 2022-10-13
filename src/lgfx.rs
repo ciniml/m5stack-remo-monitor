@@ -2,8 +2,52 @@
 use esp_idf_sys::lgfx_sys::*;
 use num_enum::IntoPrimitive;
 
+type Mutex<T> = std::sync::Mutex<T>;
+type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
+
 pub struct Gfx {
-    target: lgfx_target_t,
+    target: Mutex<lgfx_target_t>,
+}
+
+pub struct SharedLgfxTarget<'a> {
+    mutex: &'a Mutex<lgfx_target_t>,
+}
+impl<'a> SharedLgfxTarget<'a> {
+    pub fn new(mutex: &'a Mutex<lgfx_target_t>) -> Self {
+        Self { mutex }
+    }
+    pub fn lock<'b>(&'b self) -> LgfxGuard<'b> {
+        LgfxGuard::<'b> {
+            update_suppressed: false,
+            guard: self.mutex.lock().unwrap(),
+        }
+    }
+    pub fn lock_without_auto_update<'b>(&'b self) -> LgfxGuard<'b> {
+        let mut guard = self.mutex.lock().unwrap();
+        unsafe { lgfx_c_start_write(guard.target()); }
+        LgfxGuard::<'b> {
+            update_suppressed: true,
+            guard,
+        }
+    }
+}
+pub struct LgfxGuard<'a> {
+    update_suppressed: bool,
+    guard: MutexGuard<'a, lgfx_target_t>,
+}
+
+impl<'a> LgfxTarget for LgfxGuard<'a> {
+    fn target(&self) -> lgfx_target_t {
+        *self.guard
+    }
+}  
+
+impl<'a> Drop for LgfxGuard<'a> {
+    fn drop(&mut self) {
+        if self.update_suppressed {
+            unsafe { lgfx_c_end_write(self.guard.target()); }
+        }
+    }
 }
 
 static mut GFX_INITIALIZED: bool = false;
@@ -16,17 +60,20 @@ impl Gfx {
                 GFX_INITIALIZED = true;
             }
             Some(Gfx {
-                target: unsafe { lgfx_c_setup() },
+                target: Mutex::new(unsafe { lgfx_c_setup() }),
             })
         }
+    }
+    pub fn as_shared<'a>(&'a self) -> SharedLgfxTarget<'a> {
+        SharedLgfxTarget::new(&self.target)
     }
     pub fn create_sprite(&self, w: i32, h: i32) -> Result<Sprite, ()> {
         Sprite::new(self, w, h)
     }
 }
-impl LgfxTarget for Gfx {
+impl LgfxTarget for lgfx_target_t {
     fn target(&self) -> lgfx_target_t {
-        self.target
+        *self
     }
 }
 
@@ -34,7 +81,7 @@ impl<Target> DrawImage for Target
 where
     Target: LgfxTarget,
 {
-    fn draw_png<'a>(&self, data: &'a [u8]) -> DrawPng<'a> {
+    fn draw_png<'a>(&mut self, data: &'a [u8]) -> DrawPng<'a> {
         DrawPng::new(self.target(), data)
     }
 }
@@ -44,14 +91,19 @@ pub struct Sprite {
 }
 impl Sprite {
     fn new(gfx: &Gfx, w: i32, h: i32) -> Result<Self, ()> {
-        let sprite = unsafe { lgfx_c_create_sprite(gfx.target(), w, h) };
+        let mut target = gfx.as_shared().mutex.lock().unwrap();
+        let sprite = unsafe { lgfx_c_create_sprite(target.target(), w, h) };
         if sprite == core::ptr::null_mut() {
             Err(())
         } else {
             Ok(Self { target: sprite })
         }
     }
-    pub fn push_sprite(&self, x: i32, y: i32) {
+
+    /// Pushes the sprite to the GFX.
+    /// gfx: The parent GFX of this sprite.
+    pub fn push_sprite(&self, gfx: &Gfx, x: i32, y: i32) {
+        let _target = gfx.as_shared().mutex.lock().unwrap();    // Just lock the parent GFX.
         unsafe { lgfx_c_push_sprite(self.target, x, y) };
     }
 }
@@ -71,7 +123,7 @@ pub trait LgfxTarget {
 }
 
 pub trait DrawImage {
-    fn draw_png<'a>(&self, data: &'a [u8]) -> DrawPng<'a>;
+    fn draw_png<'a>(&mut self, data: &'a [u8]) -> DrawPng<'a>;
 }
 
 pub trait Color: Clone {
@@ -131,26 +183,26 @@ where
 }
 
 pub trait DrawPrimitives<C: Color> {
-    fn clear(&self, color: C);
-    fn fill_rect(&self, x: i32, y: i32, w: i32, h: i32, color: C);
-    fn draw_line(&self, x0: i32, y0: i32, x1: i32, y1: i32, color: C);
+    fn clear(&mut self, color: C);
+    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: C);
+    fn draw_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: C);
 }
 
 impl<Target> DrawPrimitives<ColorRgb332> for Target
 where
     Target: LgfxTarget,
 {
-    fn clear(&self, color: ColorRgb332) {
+    fn clear(&mut self, color: ColorRgb332) {
         unsafe {
             lgfx_c_clear_rgb332(self.target(), color.raw);
         }
     }
-    fn fill_rect(&self, x: i32, y: i32, w: i32, h: i32, color: ColorRgb332) {
+    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: ColorRgb332) {
         unsafe {
             lgfx_c_fill_rect_rgb332(self.target(), x, y, w, h, color.raw);
         }
     }
-    fn draw_line(&self, x0: i32, y0: i32, x1: i32, y1: i32, color: ColorRgb332) {
+    fn draw_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: ColorRgb332) {
         unsafe {
             lgfx_c_draw_line_rgb332(self.target(), x0, y0, x1, y1, color.raw);
         }
@@ -160,17 +212,17 @@ impl<Target> DrawPrimitives<ColorRgb888> for Target
 where
     Target: LgfxTarget,
 {
-    fn clear(&self, color: ColorRgb888) {
+    fn clear(&mut self, color: ColorRgb888) {
         unsafe {
             lgfx_c_clear_rgb888(self.target(), color.raw);
         }
     }
-    fn fill_rect(&self, x: i32, y: i32, w: i32, h: i32, color: ColorRgb888) {
+    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: ColorRgb888) {
         unsafe {
             lgfx_c_fill_rect_rgb888(self.target(), x, y, w, h, color.raw);
         }
     }
-    fn draw_line(&self, x0: i32, y0: i32, x1: i32, y1: i32, color: ColorRgb888) {
+    fn draw_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: ColorRgb888) {
         unsafe {
             lgfx_c_draw_line_rgb888(self.target(), x0, y0, x1, y1, color.raw);
         }
@@ -591,21 +643,28 @@ pub enum LgfxFontId {
     efontTW_24_i = lgfx_font_id_t_efontTW_24_i,
 }
 
-pub struct LgfxTargetRef<'a, Target: LgfxTarget> {
-    target: &'a Target,
+pub struct LgfxDisplay<'a, Target: LgfxTarget> {
+    target: &'a mut Target,
 }
-impl<'a, Target: LgfxTarget> LgfxTarget for LgfxTargetRef<'a, Target> {
+impl<'a, Target: LgfxTarget> LgfxDisplay<'a, Target> {
+    pub fn new(target: &'a mut Target) -> Self {
+        Self { 
+            target,
+        }
+    }
+}
+impl<'a, Target: LgfxTarget> LgfxTarget for LgfxDisplay<'a, Target> {
     fn target(&self) -> lgfx_target_t {
         self.target.target()
     }
 }
-impl<'a, Target: LgfxTarget> embedded_graphics::prelude::OriginDimensions for LgfxTargetRef<'a, Target> {
+impl<'a, Target: LgfxTarget> embedded_graphics::prelude::OriginDimensions for LgfxDisplay<'a, Target> {
     fn size(&self) -> embedded_graphics::prelude::Size {
         let size = Screen::size(self);
         embedded_graphics::prelude::Size::new(size.0 as u32, size.1 as u32)
     }
 }
-impl<'a, Target: LgfxTarget> embedded_graphics::prelude::DrawTarget for LgfxTargetRef<'a, Target> {
+impl<'a, Target: LgfxTarget> embedded_graphics::prelude::DrawTarget for LgfxDisplay<'a, Target> {
     type Color = embedded_graphics::pixelcolor::Rgb888;
     type Error = core::convert::Infallible;
     
