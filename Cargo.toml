@@ -35,6 +35,5 @@ png = "0.17.6"
 
 [package.metadata.esp-idf-sys]
 extra_components = [
-    { component_dirs = [ "components/calc" ], bindings_header = "components/calc/calc.h" },
     { component_dirs = [ "components/lgfx_c", "components/LovyanGFX" ], bindings_header = "components/lgfx_c/lgfx_c.h", bindings_module = "lgfx_sys" },
 ]

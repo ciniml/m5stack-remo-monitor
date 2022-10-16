@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use embedded_svc::wifi::{Wifi, ClientStatus, ClientConnectionStatus, ClientIpStatus};
+use embedded_svc::wifi::{ClientConnectionStatus, ClientIpStatus, ClientStatus, Wifi};
 use esp_idf_hal::prelude::Peripherals;
 use esp_idf_svc::{netif::EspNetifStack, wifi::EspWifi};
 use esp_idf_sys as _; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
@@ -32,11 +32,14 @@ fn main() -> anyhow::Result<()> {
     {
         let mut guard = gfx_shared.lock_without_auto_update();
         guard.fill_rect(0, 0, 32, 32, lgfx::ColorRgb332::new(0));
-        guard.draw_png(LOGO_PNG)
+        guard
+            .draw_png(LOGO_PNG)
             .postion(32, 0)
             .scale(0.8, 0.0)
             .execute();
-            guard.set_font(lgfx::LgfxFontId::Font4).unwrap();
+        guard
+            .set_font(lgfx::fonts::FreeMonoBoldOblique24pt7b)
+            .unwrap();
         guard.set_text_size(2.0, 2.0);
         guard.draw_chars(
             "Hello, Rust!",
@@ -48,19 +51,21 @@ fn main() -> anyhow::Result<()> {
             1.0,
         );
         guard.draw_line(100, 600, 200, 700, lgfx::ColorRgb332::new(0));
-        
+
         use embedded_graphics::prelude::*;
         use embedded_graphics::primitives::*;
-        
+
         let mut display = LgfxDisplay::new(&mut guard);
         let border_stroke = PrimitiveStyleBuilder::new()
             .stroke_color(RgbColor::BLACK)
             .stroke_width(10)
             .stroke_alignment(StrokeAlignment::Inside)
             .build();
-        display.bounding_box()
+        display
+            .bounding_box()
             .into_styled(border_stroke)
-            .draw(&mut display).unwrap();
+            .draw(&mut display)
+            .unwrap();
     }
     let mut sprite = gfx.create_sprite(64, 64).unwrap();
     sprite.clear(lgfx::ColorRgb332::new(0xff));
@@ -79,21 +84,25 @@ fn main() -> anyhow::Result<()> {
         sys_loop_stack.clone(),
         default_nvs.clone(),
     )?);
-    
+
     wifi.set_configuration(&embedded_svc::wifi::Configuration::Client(
         embedded_svc::wifi::ClientConfiguration {
             ssid: WIFI_AP.into(),
             password: WIFI_PASS.into(),
             channel: None,
             ..Default::default()
-        }
+        },
     ))?;
     log::info!("Configuring Wi-Fi");
     wifi.wait_status_with_timeout(Duration::from_secs(10), |status| !status.is_transitional())
         .map_err(|e| anyhow::anyhow!("Unexpected wifi status: {:?}", e))?;
-    
+
     let status = wifi.get_status();
-    if let embedded_svc::wifi::Status(ClientStatus::Started(ClientConnectionStatus::Connected(ClientIpStatus::Done(ip_settings))), _) = status {
+    if let embedded_svc::wifi::Status(
+        ClientStatus::Started(ClientConnectionStatus::Connected(ClientIpStatus::Done(ip_settings))),
+        _,
+    ) = status
+    {
         log::info!("WiFi connected: ip = {:?}", ip_settings);
         //ping(&ip_settings)?;
     } else {
@@ -105,7 +114,10 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-const ACCESS_TOKEN: &str = concat!("Bearer ", "mW6DeFliMYI--hmOU77QL3adkhRGbmkRcywop8w_bAQ.MEOXdyjjuQ-otVYBQc85PnkNLTouLv_gKL3YxXE2WnM");
+const ACCESS_TOKEN: &str = concat!(
+    "Bearer ",
+    "mW6DeFliMYI--hmOU77QL3adkhRGbmkRcywop8w_bAQ.MEOXdyjjuQ-otVYBQc85PnkNLTouLv_gKL3YxXE2WnM"
+);
 
 fn access_http() -> anyhow::Result<()> {
     use embedded_svc::http::{self, client::*, status, Headers, Status};
@@ -113,17 +125,16 @@ fn access_http() -> anyhow::Result<()> {
     use esp_idf_svc::http::client::*;
 
     let url = String::from("https://api.nature.global/1/appliances");
-    let mut client = EspHttpClient::new(&EspHttpClientConfiguration { crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),..Default::default() })?;
-    let mut request = client
-        .get(&url)?;
+    let mut client = EspHttpClient::new(&EspHttpClientConfiguration {
+        crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
+        ..Default::default()
+    })?;
+    let mut request = client.get(&url)?;
     request.set_header("Authorization", ACCESS_TOKEN);
     let mut response = request.submit()?;
     let mut body = [0u8; 3072];
     let (body, _) = io::read_max(response.reader(), &mut body)?;
-    log::info!(
-        "Body:\n{:?}",
-        String::from_utf8_lossy(body).into_owned(),
-    );
+    log::info!("Body:\n{:?}", String::from_utf8_lossy(body).into_owned(),);
 
     Ok(())
 

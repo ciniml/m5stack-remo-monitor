@@ -1,6 +1,4 @@
-
 use esp_idf_sys::lgfx_sys::*;
-use num_enum::IntoPrimitive;
 
 type Mutex<T> = std::sync::Mutex<T>;
 type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
@@ -24,7 +22,9 @@ impl<'a> SharedLgfxTarget<'a> {
     }
     pub fn lock_without_auto_update<'b>(&'b self) -> LgfxGuard<'b> {
         let mut guard = self.mutex.lock().unwrap();
-        unsafe { lgfx_c_start_write(guard.target()); }
+        unsafe {
+            lgfx_c_start_write(guard.target());
+        }
         LgfxGuard::<'b> {
             update_suppressed: true,
             guard,
@@ -40,12 +40,14 @@ impl<'a> LgfxTarget for LgfxGuard<'a> {
     fn target(&self) -> lgfx_target_t {
         *self.guard
     }
-}  
+}
 
 impl<'a> Drop for LgfxGuard<'a> {
     fn drop(&mut self) {
         if self.update_suppressed {
-            unsafe { lgfx_c_end_write(self.guard.target()); }
+            unsafe {
+                lgfx_c_end_write(self.guard.target());
+            }
         }
     }
 }
@@ -103,7 +105,7 @@ impl Sprite {
     /// Pushes the sprite to the GFX.
     /// gfx: The parent GFX of this sprite.
     pub fn push_sprite(&self, gfx: &Gfx, x: i32, y: i32) {
-        let _target = gfx.as_shared().mutex.lock().unwrap();    // Just lock the parent GFX.
+        let _target = gfx.as_shared().mutex.lock().unwrap(); // Just lock the parent GFX.
         unsafe { lgfx_c_push_sprite(self.target, x, y) };
     }
 }
@@ -173,12 +175,7 @@ where
     Target: LgfxTarget,
 {
     fn size(&self) -> (i32, i32) {
-        unsafe {
-            (
-                lgfx_c_width(self.target()),
-                lgfx_c_height(self.target()),
-            )
-        }
+        unsafe { (lgfx_c_width(self.target()), lgfx_c_height(self.target())) }
     }
 }
 
@@ -356,13 +353,20 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct LgfxFont {
+    pub(crate) ptr: *const core::ffi::c_void,
+}
+unsafe impl Sync for LgfxFont {}
+unsafe impl Send for LgfxFont {}
+
 pub trait FontManupulation {
-    fn set_font(&self, font: LgfxFontId) -> Result<(), ()>;
+    fn set_font(&self, font: LgfxFont) -> Result<(), ()>;
     fn set_text_size(&self, sx: f32, sy: f32);
 }
 impl<Target: LgfxTarget> FontManupulation for Target {
-    fn set_font(&self, font: LgfxFontId) -> Result<(), ()> {
-        let success = unsafe { lgfx_c_set_font(self.target(), font.into()) };
+    fn set_font(&self, font: LgfxFont) -> Result<(), ()> {
+        let success = unsafe { lgfx_c_set_font(self.target(), font.ptr) };
         if success {
             Ok(())
         } else {
@@ -451,206 +455,12 @@ impl<'a> DrawPng<'a> {
     }
 }
 
-#[allow(non_camel_case_types)]
-#[derive(IntoPrimitive)]
-#[repr(u32)]
-pub enum LgfxFontId {
-    Font0 = lgfx_font_id_t_Font0,
-    Font2 = lgfx_font_id_t_Font2,
-    Font4 = lgfx_font_id_t_Font4,
-    Font6 = lgfx_font_id_t_Font6,
-    Font7 = lgfx_font_id_t_Font7,
-    Font8 = lgfx_font_id_t_Font8,
-    Font8x8C64 = lgfx_font_id_t_Font8x8C64,
-    AsciiFont8x16 = lgfx_font_id_t_AsciiFont8x16,
-    AsciiFont24x48 = lgfx_font_id_t_AsciiFont24x48,
-    TomThumb = lgfx_font_id_t_TomThumb,
-    FreeMono9pt7b = lgfx_font_id_t_FreeMono9pt7b,
-    FreeMono12pt7b = lgfx_font_id_t_FreeMono12pt7b,
-    FreeMono18pt7b = lgfx_font_id_t_FreeMono18pt7b,
-    FreeMono24pt7b = lgfx_font_id_t_FreeMono24pt7b,
-    FreeMonoBold9pt7b = lgfx_font_id_t_FreeMonoBold9pt7b,
-    FreeMonoBold12pt7b = lgfx_font_id_t_FreeMonoBold12pt7b,
-    FreeMonoBold18pt7b = lgfx_font_id_t_FreeMonoBold18pt7b,
-    FreeMonoBold24pt7b = lgfx_font_id_t_FreeMonoBold24pt7b,
-    FreeMonoOblique9pt7b = lgfx_font_id_t_FreeMonoOblique9pt7b,
-    FreeMonoOblique12pt7b = lgfx_font_id_t_FreeMonoOblique12pt7b,
-    FreeMonoOblique18pt7b = lgfx_font_id_t_FreeMonoOblique18pt7b,
-    FreeMonoOblique24pt7b = lgfx_font_id_t_FreeMonoOblique24pt7b,
-    FreeMonoBoldOblique9pt7b = lgfx_font_id_t_FreeMonoBoldOblique9pt7b,
-    FreeMonoBoldOblique12pt7b = lgfx_font_id_t_FreeMonoBoldOblique12pt7b,
-    FreeMonoBoldOblique18pt7b = lgfx_font_id_t_FreeMonoBoldOblique18pt7b,
-    FreeMonoBoldOblique24pt7b = lgfx_font_id_t_FreeMonoBoldOblique24pt7b,
-    FreeSans9pt7b = lgfx_font_id_t_FreeSans9pt7b,
-    FreeSans12pt7b = lgfx_font_id_t_FreeSans12pt7b,
-    FreeSans18pt7b = lgfx_font_id_t_FreeSans18pt7b,
-    FreeSans24pt7b = lgfx_font_id_t_FreeSans24pt7b,
-    FreeSansBold9pt7b = lgfx_font_id_t_FreeSansBold9pt7b,
-    FreeSansBold12pt7b = lgfx_font_id_t_FreeSansBold12pt7b,
-    FreeSansBold18pt7b = lgfx_font_id_t_FreeSansBold18pt7b,
-    FreeSansBold24pt7b = lgfx_font_id_t_FreeSansBold24pt7b,
-    FreeSansOblique9pt7b = lgfx_font_id_t_FreeSansOblique9pt7b,
-    FreeSansOblique12pt7b = lgfx_font_id_t_FreeSansOblique12pt7b,
-    FreeSansOblique18pt7b = lgfx_font_id_t_FreeSansOblique18pt7b,
-    FreeSansOblique24pt7b = lgfx_font_id_t_FreeSansOblique24pt7b,
-    FreeSansBoldOblique9pt7b = lgfx_font_id_t_FreeSansBoldOblique9pt7b,
-    FreeSansBoldOblique12pt7b = lgfx_font_id_t_FreeSansBoldOblique12pt7b,
-    FreeSansBoldOblique18pt7b = lgfx_font_id_t_FreeSansBoldOblique18pt7b,
-    FreeSansBoldOblique24pt7b = lgfx_font_id_t_FreeSansBoldOblique24pt7b,
-    FreeSerif9pt7b = lgfx_font_id_t_FreeSerif9pt7b,
-    FreeSerif12pt7b = lgfx_font_id_t_FreeSerif12pt7b,
-    FreeSerif18pt7b = lgfx_font_id_t_FreeSerif18pt7b,
-    FreeSerif24pt7b = lgfx_font_id_t_FreeSerif24pt7b,
-    FreeSerifItalic9pt7b = lgfx_font_id_t_FreeSerifItalic9pt7b,
-    FreeSerifItalic12pt7b = lgfx_font_id_t_FreeSerifItalic12pt7b,
-    FreeSerifItalic18pt7b = lgfx_font_id_t_FreeSerifItalic18pt7b,
-    FreeSerifItalic24pt7b = lgfx_font_id_t_FreeSerifItalic24pt7b,
-    FreeSerifBold9pt7b = lgfx_font_id_t_FreeSerifBold9pt7b,
-    FreeSerifBold12pt7b = lgfx_font_id_t_FreeSerifBold12pt7b,
-    FreeSerifBold18pt7b = lgfx_font_id_t_FreeSerifBold18pt7b,
-    FreeSerifBold24pt7b = lgfx_font_id_t_FreeSerifBold24pt7b,
-    FreeSerifBoldItalic9pt7b = lgfx_font_id_t_FreeSerifBoldItalic9pt7b,
-    FreeSerifBoldItalic12pt7b = lgfx_font_id_t_FreeSerifBoldItalic12pt7b,
-    FreeSerifBoldItalic18pt7b = lgfx_font_id_t_FreeSerifBoldItalic18pt7b,
-    FreeSerifBoldItalic24pt7b = lgfx_font_id_t_FreeSerifBoldItalic24pt7b,
-    Orbitron_Light_24 = lgfx_font_id_t_Orbitron_Light_24,
-    Orbitron_Light_32 = lgfx_font_id_t_Orbitron_Light_32,
-    Roboto_Thin_24 = lgfx_font_id_t_Roboto_Thin_24,
-    Satisfy_24 = lgfx_font_id_t_Satisfy_24,
-    Yellowtail_32 = lgfx_font_id_t_Yellowtail_32,
-    DejaVu9 = lgfx_font_id_t_DejaVu9,
-    DejaVu12 = lgfx_font_id_t_DejaVu12,
-    DejaVu18 = lgfx_font_id_t_DejaVu18,
-    DejaVu24 = lgfx_font_id_t_DejaVu24,
-    DejaVu40 = lgfx_font_id_t_DejaVu40,
-    DejaVu56 = lgfx_font_id_t_DejaVu56,
-    DejaVu72 = lgfx_font_id_t_DejaVu72,
-    lgfxJapanMincho_8 = lgfx_font_id_t_lgfxJapanMincho_8,
-    lgfxJapanMincho_12 = lgfx_font_id_t_lgfxJapanMincho_12,
-    lgfxJapanMincho_16 = lgfx_font_id_t_lgfxJapanMincho_16,
-    lgfxJapanMincho_20 = lgfx_font_id_t_lgfxJapanMincho_20,
-    lgfxJapanMincho_24 = lgfx_font_id_t_lgfxJapanMincho_24,
-    lgfxJapanMincho_28 = lgfx_font_id_t_lgfxJapanMincho_28,
-    lgfxJapanMincho_32 = lgfx_font_id_t_lgfxJapanMincho_32,
-    lgfxJapanMincho_36 = lgfx_font_id_t_lgfxJapanMincho_36,
-    lgfxJapanMincho_40 = lgfx_font_id_t_lgfxJapanMincho_40,
-    lgfxJapanMinchoP_8 = lgfx_font_id_t_lgfxJapanMinchoP_8,
-    lgfxJapanMinchoP_12 = lgfx_font_id_t_lgfxJapanMinchoP_12,
-    lgfxJapanMinchoP_16 = lgfx_font_id_t_lgfxJapanMinchoP_16,
-    lgfxJapanMinchoP_20 = lgfx_font_id_t_lgfxJapanMinchoP_20,
-    lgfxJapanMinchoP_24 = lgfx_font_id_t_lgfxJapanMinchoP_24,
-    lgfxJapanMinchoP_28 = lgfx_font_id_t_lgfxJapanMinchoP_28,
-    lgfxJapanMinchoP_32 = lgfx_font_id_t_lgfxJapanMinchoP_32,
-    lgfxJapanMinchoP_36 = lgfx_font_id_t_lgfxJapanMinchoP_36,
-    lgfxJapanMinchoP_40 = lgfx_font_id_t_lgfxJapanMinchoP_40,
-    lgfxJapanGothic_8 = lgfx_font_id_t_lgfxJapanGothic_8,
-    lgfxJapanGothic_12 = lgfx_font_id_t_lgfxJapanGothic_12,
-    lgfxJapanGothic_16 = lgfx_font_id_t_lgfxJapanGothic_16,
-    lgfxJapanGothic_20 = lgfx_font_id_t_lgfxJapanGothic_20,
-    lgfxJapanGothic_24 = lgfx_font_id_t_lgfxJapanGothic_24,
-    lgfxJapanGothic_28 = lgfx_font_id_t_lgfxJapanGothic_28,
-    lgfxJapanGothic_32 = lgfx_font_id_t_lgfxJapanGothic_32,
-    lgfxJapanGothic_36 = lgfx_font_id_t_lgfxJapanGothic_36,
-    lgfxJapanGothic_40 = lgfx_font_id_t_lgfxJapanGothic_40,
-    lgfxJapanGothicP_8 = lgfx_font_id_t_lgfxJapanGothicP_8,
-    lgfxJapanGothicP_12 = lgfx_font_id_t_lgfxJapanGothicP_12,
-    lgfxJapanGothicP_16 = lgfx_font_id_t_lgfxJapanGothicP_16,
-    lgfxJapanGothicP_20 = lgfx_font_id_t_lgfxJapanGothicP_20,
-    lgfxJapanGothicP_24 = lgfx_font_id_t_lgfxJapanGothicP_24,
-    lgfxJapanGothicP_28 = lgfx_font_id_t_lgfxJapanGothicP_28,
-    lgfxJapanGothicP_32 = lgfx_font_id_t_lgfxJapanGothicP_32,
-    lgfxJapanGothicP_36 = lgfx_font_id_t_lgfxJapanGothicP_36,
-    lgfxJapanGothicP_40 = lgfx_font_id_t_lgfxJapanGothicP_40,
-    efontCN_10 = lgfx_font_id_t_efontCN_10,
-    efontCN_10_b = lgfx_font_id_t_efontCN_10_b,
-    efontCN_10_bi = lgfx_font_id_t_efontCN_10_bi,
-    efontCN_10_i = lgfx_font_id_t_efontCN_10_i,
-    efontCN_12 = lgfx_font_id_t_efontCN_12,
-    efontCN_12_b = lgfx_font_id_t_efontCN_12_b,
-    efontCN_12_bi = lgfx_font_id_t_efontCN_12_bi,
-    efontCN_12_i = lgfx_font_id_t_efontCN_12_i,
-    efontCN_14 = lgfx_font_id_t_efontCN_14,
-    efontCN_14_b = lgfx_font_id_t_efontCN_14_b,
-    efontCN_14_bi = lgfx_font_id_t_efontCN_14_bi,
-    efontCN_14_i = lgfx_font_id_t_efontCN_14_i,
-    efontCN_16 = lgfx_font_id_t_efontCN_16,
-    efontCN_16_b = lgfx_font_id_t_efontCN_16_b,
-    efontCN_16_bi = lgfx_font_id_t_efontCN_16_bi,
-    efontCN_16_i = lgfx_font_id_t_efontCN_16_i,
-    efontCN_24 = lgfx_font_id_t_efontCN_24,
-    efontCN_24_b = lgfx_font_id_t_efontCN_24_b,
-    efontCN_24_bi = lgfx_font_id_t_efontCN_24_bi,
-    efontCN_24_i = lgfx_font_id_t_efontCN_24_i,
-    efontJA_10 = lgfx_font_id_t_efontJA_10,
-    efontJA_10_b = lgfx_font_id_t_efontJA_10_b,
-    efontJA_10_bi = lgfx_font_id_t_efontJA_10_bi,
-    efontJA_10_i = lgfx_font_id_t_efontJA_10_i,
-    efontJA_12 = lgfx_font_id_t_efontJA_12,
-    efontJA_12_b = lgfx_font_id_t_efontJA_12_b,
-    efontJA_12_bi = lgfx_font_id_t_efontJA_12_bi,
-    efontJA_12_i = lgfx_font_id_t_efontJA_12_i,
-    efontJA_14 = lgfx_font_id_t_efontJA_14,
-    efontJA_14_b = lgfx_font_id_t_efontJA_14_b,
-    efontJA_14_bi = lgfx_font_id_t_efontJA_14_bi,
-    efontJA_14_i = lgfx_font_id_t_efontJA_14_i,
-    efontJA_16 = lgfx_font_id_t_efontJA_16,
-    efontJA_16_b = lgfx_font_id_t_efontJA_16_b,
-    efontJA_16_bi = lgfx_font_id_t_efontJA_16_bi,
-    efontJA_16_i = lgfx_font_id_t_efontJA_16_i,
-    efontJA_24 = lgfx_font_id_t_efontJA_24,
-    efontJA_24_b = lgfx_font_id_t_efontJA_24_b,
-    efontJA_24_bi = lgfx_font_id_t_efontJA_24_bi,
-    efontJA_24_i = lgfx_font_id_t_efontJA_24_i,
-    efontKR_10 = lgfx_font_id_t_efontKR_10,
-    efontKR_10_b = lgfx_font_id_t_efontKR_10_b,
-    efontKR_10_bi = lgfx_font_id_t_efontKR_10_bi,
-    efontKR_10_i = lgfx_font_id_t_efontKR_10_i,
-    efontKR_12 = lgfx_font_id_t_efontKR_12,
-    efontKR_12_b = lgfx_font_id_t_efontKR_12_b,
-    efontKR_12_bi = lgfx_font_id_t_efontKR_12_bi,
-    efontKR_12_i = lgfx_font_id_t_efontKR_12_i,
-    efontKR_14 = lgfx_font_id_t_efontKR_14,
-    efontKR_14_b = lgfx_font_id_t_efontKR_14_b,
-    efontKR_14_bi = lgfx_font_id_t_efontKR_14_bi,
-    efontKR_14_i = lgfx_font_id_t_efontKR_14_i,
-    efontKR_16 = lgfx_font_id_t_efontKR_16,
-    efontKR_16_b = lgfx_font_id_t_efontKR_16_b,
-    efontKR_16_bi = lgfx_font_id_t_efontKR_16_bi,
-    efontKR_16_i = lgfx_font_id_t_efontKR_16_i,
-    efontKR_24 = lgfx_font_id_t_efontKR_24,
-    efontKR_24_b = lgfx_font_id_t_efontKR_24_b,
-    efontKR_24_bi = lgfx_font_id_t_efontKR_24_bi,
-    efontKR_24_i = lgfx_font_id_t_efontKR_24_i,
-    efontTW_10 = lgfx_font_id_t_efontTW_10,
-    efontTW_10_b = lgfx_font_id_t_efontTW_10_b,
-    efontTW_10_bi = lgfx_font_id_t_efontTW_10_bi,
-    efontTW_10_i = lgfx_font_id_t_efontTW_10_i,
-    efontTW_12 = lgfx_font_id_t_efontTW_12,
-    efontTW_12_b = lgfx_font_id_t_efontTW_12_b,
-    efontTW_12_bi = lgfx_font_id_t_efontTW_12_bi,
-    efontTW_12_i = lgfx_font_id_t_efontTW_12_i,
-    efontTW_14 = lgfx_font_id_t_efontTW_14,
-    efontTW_14_b = lgfx_font_id_t_efontTW_14_b,
-    efontTW_14_bi = lgfx_font_id_t_efontTW_14_bi,
-    efontTW_14_i = lgfx_font_id_t_efontTW_14_i,
-    efontTW_16 = lgfx_font_id_t_efontTW_16,
-    efontTW_16_b = lgfx_font_id_t_efontTW_16_b,
-    efontTW_16_bi = lgfx_font_id_t_efontTW_16_bi,
-    efontTW_16_i = lgfx_font_id_t_efontTW_16_i,
-    efontTW_24 = lgfx_font_id_t_efontTW_24,
-    efontTW_24_b = lgfx_font_id_t_efontTW_24_b,
-    efontTW_24_bi = lgfx_font_id_t_efontTW_24_bi,
-    efontTW_24_i = lgfx_font_id_t_efontTW_24_i,
-}
-
 pub struct LgfxDisplay<'a, Target: LgfxTarget> {
     target: &'a mut Target,
 }
 impl<'a, Target: LgfxTarget> LgfxDisplay<'a, Target> {
     pub fn new(target: &'a mut Target) -> Self {
-        Self { 
-            target,
-        }
+        Self { target }
     }
 }
 impl<'a, Target: LgfxTarget> LgfxTarget for LgfxDisplay<'a, Target> {
@@ -658,7 +468,9 @@ impl<'a, Target: LgfxTarget> LgfxTarget for LgfxDisplay<'a, Target> {
         self.target.target()
     }
 }
-impl<'a, Target: LgfxTarget> embedded_graphics::prelude::OriginDimensions for LgfxDisplay<'a, Target> {
+impl<'a, Target: LgfxTarget> embedded_graphics::prelude::OriginDimensions
+    for LgfxDisplay<'a, Target>
+{
     fn size(&self) -> embedded_graphics::prelude::Size {
         let size = Screen::size(self);
         embedded_graphics::prelude::Size::new(size.0 as u32, size.1 as u32)
@@ -667,25 +479,46 @@ impl<'a, Target: LgfxTarget> embedded_graphics::prelude::OriginDimensions for Lg
 impl<'a, Target: LgfxTarget> embedded_graphics::prelude::DrawTarget for LgfxDisplay<'a, Target> {
     type Color = embedded_graphics::pixelcolor::Rgb888;
     type Error = core::convert::Infallible;
-    
+
     fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-        where
-            I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>> {
+    where
+        I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
+    {
         for embedded_graphics::Pixel(coord, color) in pixels.into_iter() {
-            self.draw_line(coord.x, coord.y, coord.x, coord.y, ColorRgb888::new(embedded_graphics::pixelcolor::IntoStorage::into_storage(color)));
+            self.draw_line(
+                coord.x,
+                coord.y,
+                coord.x,
+                coord.y,
+                ColorRgb888::new(embedded_graphics::pixelcolor::IntoStorage::into_storage(
+                    color,
+                )),
+            );
         }
         Ok(())
     }
-    fn fill_solid(&mut self, area: &embedded_graphics::primitives::Rectangle, color: Self::Color) -> Result<(), Self::Error> {
+    fn fill_solid(
+        &mut self,
+        area: &embedded_graphics::primitives::Rectangle,
+        color: Self::Color,
+    ) -> Result<(), Self::Error> {
         self.fill_rect(
             area.top_left.x as i32,
             area.top_left.y as i32,
             area.size.width as i32,
             area.size.height as i32,
-            ColorRgb888::new(embedded_graphics::pixelcolor::IntoStorage::into_storage(color)),
+            ColorRgb888::new(embedded_graphics::pixelcolor::IntoStorage::into_storage(
+                color,
+            )),
         );
         Ok(())
     }
 }
 
 // TODO: ピクセルバッファを確保してpush imageするfill_contiguous実装を作る
+
+// Font definitions
+pub mod fonts {
+    use super::LgfxFont;
+    include!(concat!(env!("OUT_DIR"), "/lgfx_fonts.rs"));
+}
