@@ -35,5 +35,5 @@ png = "0.17.6"
 
 [package.metadata.esp-idf-sys]
 extra_components = [
-    { component_dirs = [ "lgfx/components/lgfx_c", "components/LovyanGFX" ] },
+    { component_dirs = [ "lgfx/components/lgfx_c", "lgfx/components/LovyanGFX" ] },
 ]

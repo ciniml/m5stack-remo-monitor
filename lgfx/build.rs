@@ -2,7 +2,7 @@ use std::{
     env,
     fs::File,
     io::Write,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 const LGFX_FONTS: [&str; 186] = [
@@ -198,10 +198,6 @@ const LGFX_C_HEADER_PATH: &str = "components/lgfx_c/lgfx_c.h";
 
 // Necessary because of this issue: https://github.com/rust-lang/cargo/issues/9641
 fn main() -> anyhow::Result<()> {
-    embuild::build::CfgArgs::output_propagated("ESP_IDF")?;
-    embuild::build::LinkArgs::output_propagated("ESP_IDF")?;
-
-    
     // Rebuild if LGFX C binding is changed.
     println!("cargo:rerun-if-changed={}", LGFX_C_HEADER_PATH);
 
@@ -216,7 +212,7 @@ fn main() -> anyhow::Result<()> {
             .write_to_file(out_path.join("lgfx.rs"))
             .expect("Failed to write lgfx.rs");
     }
-    
+
     let out_dir = env::var("OUT_DIR").unwrap();
     let output_path: PathBuf = [out_dir.as_str(), "lgfx_fonts.rs"].iter().collect();
     let mut file = File::create(output_path)?;
@@ -225,6 +221,7 @@ fn main() -> anyhow::Result<()> {
     writeln!(&mut file, "mod lgfx_font_raw_defs {{")?;
     writeln!(&mut file, "extern \"C\" {{")?;
     for font_name in LGFX_FONTS {
+        // Font definition is in lgfx::v1::fonts namespace, thus the font definition is mangled as _ZN4lgfx2v15fonts{font name length}{font name}E
         writeln!(&mut file, "#[allow(unused)] #[link_name = \"_ZN4lgfx2v15fonts{}{}E\"] pub static {}: core::ffi::c_void;", font_name.len(), font_name, font_name)?;
     }
     writeln!(&mut file, "}}")?;
