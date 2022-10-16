@@ -26,7 +26,7 @@ esp-idf-svc = { version = "0.42.3", features = ["experimental"]}
 esp-idf-sys = { version = "0.31.9", features = ["binstart"] }
 log = "0.4.17"
 num_enum = "0.5.7"
-
+lgfx = { path = "lgfx" }
 
 [build-dependencies]
 embuild = "0.30"
@@ -35,5 +35,5 @@ png = "0.17.6"
 
 [package.metadata.esp-idf-sys]
 extra_components = [
-    { component_dirs = [ "components/lgfx_c", "components/LovyanGFX" ], bindings_header = "components/lgfx_c/lgfx_c.h", bindings_module = "lgfx_sys" },
+    { component_dirs = [ "lgfx/components/lgfx_c", "components/LovyanGFX" ] },
 ]

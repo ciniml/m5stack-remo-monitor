@@ -4,7 +4,8 @@ use embedded_svc::wifi::{ClientConnectionStatus, ClientIpStatus, ClientStatus, W
 use esp_idf_hal::prelude::Peripherals;
 use esp_idf_svc::{netif::EspNetifStack, wifi::EspWifi};
 use esp_idf_sys as _; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
-mod lgfx;
+
+use lgfx;
 
 use anyhow::bail;
 

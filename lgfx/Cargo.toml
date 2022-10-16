@@ -1,0 +1,26 @@
+[package]
+name = "lgfx"
+version = "0.1.0"
+authors = ["Kenta IDA <fuga@fugafuga.org>"]
+edition = "2021"
+resolver = "2"
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true # Symbols are nice and they don't increase the size on Flash
+opt-level = "z"
+
+[features]
+pio = ["esp-idf-sys/pio"]
+
+[dependencies]
+anyhow = "1"
+embedded-graphics = "0.7.1"
+esp-idf-sys = { version = "0.31.9", features = ["binstart"] }
+
+[build-dependencies]
+embuild = "0.30"
+anyhow = "1"
+bindgen = "0.60.1"

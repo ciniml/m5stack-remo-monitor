@@ -1,7 +1,7 @@
-use esp_idf_sys::lgfx_sys::*;
-
 type Mutex<T> = std::sync::Mutex<T>;
 type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
+
+include!(concat!(env!("OUT_DIR"), "/lgfx.rs"));
 
 pub struct Gfx {
     target: Mutex<lgfx_target_t>,
