@@ -8,11 +8,28 @@
 static LGFX gfx;
 using namespace lgfx::v1;
 
+
 lgfx_target_t lgfx_c_setup(void) 
 {
     gfx.init();
-    gfx.setEpdMode(epd_mode_t::epd_quality);
     return reinterpret_cast<lgfx_target_t>(static_cast<LovyanGFX*>(&gfx));
+}
+
+::epd_mode_t lgfx_c_get_epd_mode(lgfx_target_t target) {
+    auto gfx = static_cast<LGFX*>(reinterpret_cast<LovyanGFX*>(target));
+    return static_cast<::epd_mode_t>(gfx->getEpdMode());
+}
+void lgfx_c_set_epd_mode(lgfx_target_t target, ::epd_mode_t epd_mode) {
+    auto gfx = static_cast<LGFX*>(reinterpret_cast<LovyanGFX*>(target));
+    gfx->setEpdMode(static_cast<lgfx::v1::epd_mode_t>(epd_mode));
+}
+bool lgfx_c_is_epd(lgfx_target_t target) {
+    auto gfx = static_cast<LGFX*>(reinterpret_cast<LovyanGFX*>(target));
+    return gfx->isEPD();
+}
+void lgfx_c_set_rotation(lgfx_target_t target, uint_fast8_t rotation) {
+    auto gfx = reinterpret_cast<LovyanGFX*>(target);
+    gfx->setRotation(rotation);
 }
 
 int32_t lgfx_c_width(lgfx_target_t target) {
@@ -22,6 +39,11 @@ int32_t lgfx_c_width(lgfx_target_t target) {
 int32_t lgfx_c_height(lgfx_target_t target) {
     auto gfx = reinterpret_cast<LovyanGFX*>(target);
     return gfx->height();
+}
+
+int32_t lgfx_c_font_height(lgfx_target_t target) {
+    auto gfx = reinterpret_cast<LovyanGFX*>(target);
+    return gfx->fontHeight();
 }
 
 void lgfx_c_start_write(lgfx_target_t target) {

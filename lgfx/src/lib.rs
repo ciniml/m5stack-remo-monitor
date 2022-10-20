@@ -1,11 +1,50 @@
 type Mutex<T> = std::sync::Mutex<T>;
 type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
 
-include!(concat!(env!("OUT_DIR"), "/lgfx.rs"));
+#[allow(unused)]
+#[allow(non_camel_case_types)]
+#[allow(non_upper_case_globals)]
+mod lgfx_sys {
+    include!(concat!(env!("OUT_DIR"), "/lgfx.rs"));
+}
+use lgfx_sys::*;
+pub use lgfx_sys::textdatum_t;
+
+#[derive(Debug)]
+pub enum EpdMode {
+    Quality = 1,
+    Text = 2,
+    Fast = 3,
+    Fastest = 4,
+}
+
+impl TryFrom<epd_mode_t> for EpdMode {
+    type Error = ();
+    fn try_from(value: epd_mode_t) -> Result<Self, Self::Error> {
+        match value {
+            epd_mode_epd_quality => Ok(Self::Quality),
+            epd_mode_epd_text => Ok(Self::Text),
+            epd_mode_epd_fast => Ok(Self::Fast),
+            epd_mode_epd_fastest => Ok(Self::Fastest),
+            _ => Err(()),
+        }
+    }
+}
+impl From<EpdMode> for epd_mode_t {
+    fn from(value: EpdMode) -> Self {
+        match value {
+            EpdMode::Quality => epd_mode_epd_quality,
+            EpdMode::Text => epd_mode_epd_text,
+            EpdMode::Fast => epd_mode_epd_fast,
+            EpdMode::Fastest => epd_mode_epd_fastest,
+        }
+    }
+}
 
 pub struct Gfx {
     target: Mutex<lgfx_target_t>,
 }
+unsafe impl Send for Gfx {}
 
 pub struct SharedLgfxTarget<'a> {
     mutex: &'a Mutex<lgfx_target_t>,
@@ -36,6 +75,22 @@ pub struct LgfxGuard<'a> {
     guard: MutexGuard<'a, lgfx_target_t>,
 }
 
+impl<'a> LgfxGuard<'a> {
+    pub fn is_epd(&mut self) -> bool {
+        unsafe { lgfx_c_is_epd(self.target()) }
+    }
+    pub fn get_epd_mode(&mut self) -> EpdMode {
+        let epd_mode = unsafe { lgfx_c_get_epd_mode(self.target()) };
+        epd_mode.try_into().expect("unknown EPD mode returned by LGFX.")
+    }
+    pub fn set_epd_mode(&mut self, mode: EpdMode) {
+        unsafe { lgfx_c_set_epd_mode(self.target(), mode.into()); }
+    }
+    pub fn set_rotation(&mut self, rotation: u8) {
+        unsafe { lgfx_c_set_rotation(self.target(), rotation ); }
+    }
+}
+
 impl<'a> LgfxTarget for LgfxGuard<'a> {
     fn target(&self) -> lgfx_target_t {
         *self.guard
@@ -51,6 +106,7 @@ impl<'a> Drop for LgfxGuard<'a> {
         }
     }
 }
+
 
 static mut GFX_INITIALIZED: bool = false;
 impl Gfx {
@@ -132,7 +188,7 @@ pub trait Color: Clone {
     fn as_u32(&self) -> u32;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct ColorRgb332 {
     raw: u8,
 }
@@ -152,7 +208,7 @@ impl Color for ColorRgb332 {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct ColorRgb888 {
     raw: u32,
 }
@@ -361,11 +417,15 @@ unsafe impl Sync for LgfxFont {}
 unsafe impl Send for LgfxFont {}
 
 pub trait FontManupulation {
-    fn set_font(&self, font: LgfxFont) -> Result<(), ()>;
-    fn set_text_size(&self, sx: f32, sy: f32);
+    fn font_height(&mut self) -> i32;
+    fn set_font(&mut self, font: LgfxFont) -> Result<(), ()>;
+    fn set_text_size(&mut self, sx: f32, sy: f32);
 }
 impl<Target: LgfxTarget> FontManupulation for Target {
-    fn set_font(&self, font: LgfxFont) -> Result<(), ()> {
+    fn font_height(&mut self) -> i32 {
+        unsafe { lgfx_c_font_height(self.target()) }
+    }
+    fn set_font(&mut self, font: LgfxFont) -> Result<(), ()> {
         let success = unsafe { lgfx_c_set_font(self.target(), font.ptr) };
         if success {
             Ok(())
@@ -373,7 +433,7 @@ impl<Target: LgfxTarget> FontManupulation for Target {
             Err(())
         }
     }
-    fn set_text_size(&self, sx: f32, sy: f32) {
+    fn set_text_size(&mut self, sx: f32, sy: f32) {
         unsafe {
             lgfx_c_set_text_size(self.target(), sx, sy);
         }
@@ -408,7 +468,7 @@ impl<'a> DrawPng<'a> {
             offset_y: 0,
             scale_x: 1.0,
             scale_y: 0.0,
-            datum_: textdatum_t_top_left,
+            datum_: textdatum_top_left,
         }
     }
     pub fn postion(mut self, x: i32, y: i32) -> Self {

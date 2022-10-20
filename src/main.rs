@@ -1,11 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
-use embedded_svc::wifi::{ClientConnectionStatus, ClientIpStatus, ClientStatus, Wifi};
+use embedded_svc::{wifi::{ClientConnectionStatus, ClientIpStatus, ClientStatus, Wifi}, timer::{TimerService, PeriodicTimer}};
 use esp_idf_hal::prelude::Peripherals;
-use esp_idf_svc::{netif::EspNetifStack, wifi::EspWifi};
+use esp_idf_svc::{netif::EspNetifStack, wifi::EspWifi, timer::{EspTimerService, EspTaskTimerService, EspTimer}};
 use esp_idf_sys as _; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 
-use lgfx;
+use rand::prelude::*;
+
+use lgfx::{self, ColorRgb332};
 
 use anyhow::bail;
 
@@ -16,11 +18,229 @@ const LOGO_PNG: &[u8; 9278] = include_bytes!(concat!(
 
 use lgfx::{DrawImage, DrawPrimitives, Gfx};
 
-use crate::lgfx::{DrawChars, FontManupulation, LgfxDisplay};
+use crate::lgfx::{EpdMode, DrawChars, FontManupulation, LgfxDisplay};
 
 const WIFI_AP: &str = env!("WIFI_AP");
 const WIFI_PASS: &str = env!("WIFI_PASS");
 
+#[derive(Clone, Copy, Debug)]
+struct SensorRecord
+{
+    pub ambient_temperature: f32,
+    pub relative_humidity: f32,
+    pub ambient_luminous_level: f32,
+    pub instant_power_usage: f32,
+}
+
+impl Default for SensorRecord {
+    fn default() -> Self {
+        Self {
+            ambient_temperature: 0.0,
+            relative_humidity: 0.0,
+            ambient_luminous_level: 0.0,
+            instant_power_usage: 0.0,
+        }
+    }
+}
+
+type Timestamp = std::time::SystemTime;
+
+struct SensorRecords<const N: usize>
+{
+    records: heapless::spsc::Queue<SensorRecord, N>,
+    timestamp: Option<Timestamp>,
+}
+
+impl<const N: usize> SensorRecords<N>
+{
+    pub const fn new() -> Self {
+        Self {
+            records: heapless::spsc::Queue::new(),
+            timestamp: None,
+        }
+    }
+
+    pub fn add_with_timestamp(&mut self, record: SensorRecord, timestamp: Timestamp) {
+        if self.records.is_full() {
+            self.records.dequeue();
+        }
+        self.records.enqueue(record).unwrap();
+        self.timestamp = Some(timestamp);
+    }
+
+    pub fn last_timestamp(&self) -> Option<Timestamp> {
+        self.timestamp
+    }
+
+    pub fn iter<'a>(&'a self) -> heapless::spsc::Iter<'a, SensorRecord, N> {
+        self.records.iter()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    pub fn latest(&self) -> Option<(SensorRecord, Timestamp)> {
+        if let Some(timestamp) = self.timestamp {
+            self.records.iter().last().and_then(|record| Some((*record, timestamp)))
+        } else {
+            None
+        }
+    }
+}
+
+const SENSOR_RECORD_CAPACITY: usize = 60*24+1;
+static mut SENSOR_RECORDS: SensorRecords<SENSOR_RECORD_CAPACITY> = SensorRecords::new();
+static LAST_RECORD: std::sync::Mutex<Option<(SensorRecord, Timestamp)>> = std::sync::Mutex::new(None);
+static SAMPLED_RECORD: std::sync::Mutex<Option<(SensorRecord, Timestamp)>> = std::sync::Mutex::new(None);
+
+fn update_task() -> ! {
+    let mut rng = rand::thread_rng();
+    loop {
+        let record = SensorRecord {
+            ambient_temperature: rng.gen_range(0.0..40.0),
+            relative_humidity: rng.gen_range(0.0..=100.0),
+            ambient_luminous_level: rng.gen_range(0.0..=100.0),
+            instant_power_usage: rng.gen_range(0.0..2000.0),
+        };
+        let timestamp = std::time::SystemTime::now();
+        log::info!("update task: {:?} {:?}", record, timestamp);
+        *LAST_RECORD.lock().unwrap() = Some((record, timestamp));
+        std::thread::sleep(Duration::from_secs(30));
+    }
+}
+
+fn sample_task() {
+    let timestamp =  std::time::SystemTime::now();
+    log::info!("sample task: {:?}", timestamp);
+    let last_record = LAST_RECORD.lock().unwrap().take();
+    *SAMPLED_RECORD.lock().unwrap() = last_record.and_then(|record| Some((record.0, timestamp)));
+}
+
+fn ui_task(gfx: lgfx::SharedLgfxTarget) -> ! {
+    let sensor_records = unsafe { &mut SENSOR_RECORDS };
+    loop {
+        if let Some((record, timestamp)) = SAMPLED_RECORD.lock().unwrap().take() {
+            // New record has arrived.
+            sensor_records.add_with_timestamp(record, timestamp);
+        }
+
+        let (max, min) = if sensor_records.is_empty() {
+            // Default max/min
+            let max = SensorRecord {
+                ambient_temperature: 40.0,
+                relative_humidity: 100.0,
+                ambient_luminous_level: 100.0,
+                instant_power_usage: 1000.0,
+            };
+            let min = SensorRecord {
+                ambient_temperature: 0.0,
+                relative_humidity: 0.0,
+                ambient_luminous_level: 0.0,
+                instant_power_usage: 0.0,
+            };
+            (max, min)
+        } else {
+            // Calculate max/min
+            let mut max = SensorRecord {
+                ambient_temperature: f32::NEG_INFINITY,
+                relative_humidity: f32::NEG_INFINITY,
+                ambient_luminous_level: f32::NEG_INFINITY,
+                instant_power_usage: f32::NEG_INFINITY,
+            };
+            let mut min = SensorRecord {
+                ambient_temperature: f32::INFINITY,
+                relative_humidity: f32::INFINITY,
+                ambient_luminous_level: f32::INFINITY,
+                instant_power_usage: f32::INFINITY,
+            };
+            for record in sensor_records.iter() {
+                max.ambient_temperature = max.ambient_temperature.max(record.ambient_temperature);
+                max.relative_humidity = max.relative_humidity.max(record.relative_humidity);
+                max.ambient_luminous_level = max.ambient_luminous_level.max(record.ambient_luminous_level);
+                max.instant_power_usage = max.instant_power_usage.max(record.instant_power_usage);
+                min.ambient_temperature = min.ambient_temperature.min(record.ambient_temperature);
+                min.relative_humidity = min.relative_humidity.min(record.relative_humidity);
+                min.ambient_luminous_level = min.ambient_luminous_level.min(record.ambient_luminous_level);
+                min.instant_power_usage = min.instant_power_usage.min(record.instant_power_usage);
+            }
+            (max, min)
+        };
+
+        let mut min_temperature_str = heapless::String::<16>::new();
+        let mut cur_temperature_str = heapless::String::<16>::new();
+        let mut max_temperature_str = heapless::String::<16>::new();
+        let mut min_humidity_str = heapless::String::<16>::new();
+        let mut cur_humidity_str = heapless::String::<16>::new();
+        let mut max_humidity_str = heapless::String::<16>::new();
+        let mut min_power_str = heapless::String::<16>::new();
+        let mut cur_power_str = heapless::String::<16>::new();
+        let mut max_power_str = heapless::String::<16>::new();
+        let mut timestamp_str = heapless::String::<32>::new();
+        let latest = sensor_records.latest();
+        if let Some((record, timestamp)) = latest {
+            use std::fmt::Write;
+            write!(&mut min_temperature_str, "{:6.1}", min.ambient_temperature);
+            write!(&mut cur_temperature_str, "{:6.1}", record.ambient_temperature);
+            write!(&mut max_temperature_str, "{:6.1}", max.ambient_temperature);
+            write!(&mut min_humidity_str, "{:6.1}", min.relative_humidity);
+            write!(&mut cur_humidity_str, "{:6.1}", record.relative_humidity);
+            write!(&mut max_humidity_str, "{:6.1}", max.relative_humidity);
+            write!(&mut min_power_str, "{:6.1}", min.instant_power_usage);
+            write!(&mut cur_power_str, "{:6.1}", record.instant_power_usage);
+            write!(&mut max_power_str, "{:6.1}", max.instant_power_usage);
+            write!(&mut timestamp_str, "{:?}", timestamp);
+        } else {
+            use std::fmt::Write;
+            min_temperature_str.write_str("--");
+            cur_temperature_str.write_str("--");
+            max_temperature_str.write_str("--");
+            min_humidity_str.write_str("--");
+            cur_humidity_str.write_str("--");
+            max_humidity_str.write_str("--");
+            min_power_str.write_str("--");
+            cur_power_str.write_str("--");
+            max_power_str.write_str("--");
+            timestamp_str.write_str("--");
+        }
+        {
+            let mut guard = gfx.lock_without_auto_update();
+            let foreground = ColorRgb332::new(0xff);
+            let background = ColorRgb332::new(0x00);
+            guard.set_font(lgfx::fonts::FreeMono24pt7b);
+            let font_height = guard.font_height();
+            let line_height = font_height * 9 / 8;
+            guard.clear(lgfx::ColorRgb332::new(0xff));
+            let mut y_offset = font_height;
+            let value_margin_left = 20;
+            let value_width = 200;
+            guard.draw_chars("Temperature:", 0, y_offset, foreground, background, 0.75, 0.75);
+            y_offset += line_height;
+            guard.draw_chars(&min_temperature_str, value_margin_left + value_width * 0, y_offset, foreground, background, 1.0, 1.0);
+            guard.draw_chars(&cur_temperature_str, value_margin_left + value_width * 1, y_offset, foreground, background, 1.0, 1.0);
+            guard.draw_chars(&max_temperature_str, value_margin_left + value_width * 2, y_offset, foreground, background, 1.0, 1.0);
+            y_offset += line_height*5/4;
+            
+            guard.draw_chars("Humidity:", 0, y_offset, foreground, background, 0.75, 0.75);
+            y_offset += line_height;
+            guard.draw_chars(&min_humidity_str, value_margin_left + value_width * 0, y_offset, foreground, background, 1.0, 1.0);
+            guard.draw_chars(&cur_humidity_str, value_margin_left + value_width * 1, y_offset, foreground, background, 1.0, 1.0);
+            guard.draw_chars(&max_humidity_str, value_margin_left + value_width * 2, y_offset, foreground, background, 1.0, 1.0);
+            y_offset += line_height*5/4;
+
+            guard.draw_chars("Power:", 0, y_offset, foreground, background, 0.75, 0.75);
+            y_offset += line_height;
+            guard.draw_chars(&min_power_str, value_margin_left + value_width * 0, y_offset, foreground, background, 1.0, 1.0);
+            guard.draw_chars(&cur_power_str, value_margin_left + value_width * 1, y_offset, foreground, background, 1.0, 1.0);
+            guard.draw_chars(&max_power_str, value_margin_left + value_width * 2, y_offset, foreground, background, 1.0, 1.0);
+        }
+        std::thread::sleep(Duration::from_secs(10));
+    }
+}
+
+static GFX: std::sync::Mutex<Option<Gfx>> = std::sync::Mutex::new(None);
+static SAMPLE_TIMER_SERVICE: std::sync::Mutex<Option<EspTaskTimerService>> = std::sync::Mutex::new(None);
+static SAMPLE_TIMER: std::sync::Mutex<Option<EspTimer>> = std::sync::Mutex::new(None);
 fn main() -> anyhow::Result<()> {
     // Temporary. Will disappear once ESP-IDF 4.4 is released, but for now it is necessary to call this function once,
     // or else some patches to the runtime implemented by esp-idf-sys might not link properly.
@@ -28,53 +248,28 @@ fn main() -> anyhow::Result<()> {
     esp_idf_svc::log::EspLogger::initialize_default();
 
     println!("Hello, world!");
-    let gfx = Gfx::setup().unwrap();
-    let gfx_shared = gfx.as_shared();
+    *GFX.lock().unwrap() = Some(Gfx::setup().unwrap());
     {
-        let mut guard = gfx_shared.lock_without_auto_update();
-        guard.fill_rect(0, 0, 32, 32, lgfx::ColorRgb332::new(0));
-        guard
-            .draw_png(LOGO_PNG)
-            .postion(32, 0)
-            .scale(0.8, 0.0)
-            .execute();
-        guard
-            .set_font(lgfx::fonts::FreeMonoBoldOblique24pt7b)
-            .unwrap();
-        guard.set_text_size(2.0, 2.0);
-        guard.draw_chars(
-            "Hello, Rust!",
-            0,
-            640,
-            lgfx::ColorRgb332::new(0),
-            lgfx::ColorRgb332::new(0xff),
-            1.0,
-            1.0,
-        );
-        guard.draw_line(100, 600, 200, 700, lgfx::ColorRgb332::new(0));
-
-        use embedded_graphics::prelude::*;
-        use embedded_graphics::primitives::*;
-
-        let mut display = LgfxDisplay::new(&mut guard);
-        let border_stroke = PrimitiveStyleBuilder::new()
-            .stroke_color(RgbColor::BLACK)
-            .stroke_width(10)
-            .stroke_alignment(StrokeAlignment::Inside)
-            .build();
-        display
-            .bounding_box()
-            .into_styled(border_stroke)
-            .draw(&mut display)
-            .unwrap();
+        let guard = GFX.lock().unwrap();
+        let gfx_shared = guard.as_ref().unwrap().as_shared();
+        let mut gfx = gfx_shared.lock();
+        gfx.set_epd_mode(EpdMode::Quality);
+        gfx.set_rotation(1);
     }
-    let mut sprite = gfx.create_sprite(64, 64).unwrap();
-    sprite.clear(lgfx::ColorRgb332::new(0xff));
-    sprite.fill_rect(0, 0, 32, 32, lgfx::ColorRgb332::new(0));
-    sprite.fill_rect(32, 32, 32, 32, lgfx::ColorRgb332::new(0));
-    sprite.push_sprite(&gfx, 0, 512);
-    sprite.push_sprite(&gfx, 512 - 64, 512);
-
+    
+    std::thread::spawn(|| {
+        let guard = GFX.lock().unwrap();
+        let gfx_shared = guard.as_ref().unwrap().as_shared();
+        ui_task(gfx_shared);
+    });
+    std::thread::spawn(|| {
+        update_task();
+    });
+    *SAMPLE_TIMER_SERVICE.lock().unwrap() = Some(EspTaskTimerService::new().unwrap());
+    *SAMPLE_TIMER.lock().unwrap() = Some(SAMPLE_TIMER_SERVICE.lock().unwrap().as_mut().unwrap().timer(|| sample_task())
+        .expect("Failed to register sample task"));
+    SAMPLE_TIMER.lock().unwrap().as_mut().unwrap().every(Duration::from_secs(30)).unwrap();
+    
     let peripherals = Peripherals::take().unwrap();
     let netif_stack = Arc::new(EspNetifStack::new()?);
     let sys_loop_stack = Arc::new(esp_idf_svc::sysloop::EspSysLoopStack::new()?);

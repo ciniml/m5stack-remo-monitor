@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 
-enum textdatum_t
+typedef enum textdatum
 //  0:left   1:centre   2:right
 //  0:top    4:middle   8:bottom   16:baseline
 { top_left        =  0  // Top left (default)
@@ -25,14 +25,29 @@ enum textdatum_t
 , baseline_center = 17  // Baseline center
 , baseline_centre = 17  // Baseline center
 , baseline_right  = 18  // Baseline right
-};
+} textdatum_t;
+
+typedef enum epd_mode
+{
+    epd_quality = 1,
+    epd_text    = 2,
+    epd_fast    = 3,
+    epd_fastest = 4,
+} epd_mode_t;
 
 typedef struct lgfx_target *lgfx_target_t;
 
 lgfx_target_t lgfx_c_setup(void);
 
+epd_mode_t lgfx_c_get_epd_mode(lgfx_target_t target);
+void lgfx_c_set_epd_mode(lgfx_target_t target, enum epd_mode epd_mode);
+bool lgfx_c_is_epd(lgfx_target_t target);
+void lgfx_c_set_rotation(lgfx_target_t target, uint_fast8_t rotation);
+
 int32_t lgfx_c_width(lgfx_target_t target);
 int32_t lgfx_c_height(lgfx_target_t target);
+
+int32_t lgfx_c_font_height(lgfx_target_t target);
 
 void lgfx_c_clear_rgb332(lgfx_target_t target, uint8_t color);
 void lgfx_c_clear_rgb888(lgfx_target_t target, uint32_t color);
@@ -45,7 +60,7 @@ void lgfx_c_push_image_grayscale(lgfx_target_t target, int32_t x, int32_t y, int
 void lgfx_c_push_image_rgb332(lgfx_target_t target, int32_t x, int32_t y, int32_t w, int32_t h, const uint8_t* data);
 void lgfx_c_push_image_rgb888(lgfx_target_t target, int32_t x, int32_t y, int32_t w, int32_t h, const uint8_t* data);
 
-bool lgfx_c_draw_png(lgfx_target_t target, const uint8_t *data, uint32_t len, int32_t x, int32_t y, int32_t maxWidth, int32_t maxHeight, int32_t offX, int32_t offY, float scale_x, float scale_y, enum textdatum_t datum);
+bool lgfx_c_draw_png(lgfx_target_t target, const uint8_t *data, uint32_t len, int32_t x, int32_t y, int32_t maxWidth, int32_t maxHeight, int32_t offX, int32_t offY, float scale_x, float scale_y, textdatum_t datum);
 
 lgfx_target_t lgfx_c_create_sprite(lgfx_target_t target, int32_t w, int32_t h);
 lgfx_target_t lgfx_c_create_sprite_static(lgfx_target_t target, int32_t w, int32_t h, void* buffer, uint8_t bpp);
