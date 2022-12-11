@@ -2,8 +2,6 @@ use std::fmt::Write;
 
 use crate::{RateLimitInfo, ACCESS_TOKEN_BEARER_LENGTH, config::ACCESS_TOKEN};
 
-use embedded_svc::{wifi::{ClientConnectionStatus, ClientIpStatus, ClientStatus, Wifi}, timer::{TimerService, PeriodicTimer}, http::client::Response};
-use esp_idf_hal::prelude::Peripherals;
 use esp_idf_svc::{netif::EspNetifStack, wifi::EspWifi, timer::{EspTimerService, EspTaskTimerService, EspTimer}};
 use esp_idf_sys as _; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 use embedded_svc::http::Headers;

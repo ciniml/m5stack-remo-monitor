@@ -25,7 +25,7 @@ use embedded_io::blocking::Read;
 
 use rand::prelude::*;
 
-use lgfx::{self, ColorRgb332};
+use lgfx::{self, ColorRgb332, DrawString, textdatum_top_left};
 use heapless::Vec;
 
 const LOGO_PNG: &[u8; 9278] = include_bytes!(concat!(
@@ -45,6 +45,9 @@ use remo_api::{Device, read_devices, DeviceSubNode, NewestEvents, EchonetLitePro
 
 mod config;
 use config::*;
+
+mod chart;
+use chart::Chart;
 
 #[derive(Clone, Copy, Debug)]
 struct SensorRecord
@@ -119,6 +122,7 @@ static mut SENSOR_RECORDS: SensorRecords<SENSOR_RECORD_CAPACITY> = SensorRecords
 static LAST_RECORD: std::sync::Mutex<Option<(SensorRecord, Timestamp)>> = std::sync::Mutex::new(None);
 static SAMPLED_RECORD: std::sync::Mutex<Option<(SensorRecord, Timestamp)>> = std::sync::Mutex::new(None);
 static LAST_RATE_LIMIT: std::sync::Mutex<RateLimitInfo> = std::sync::Mutex::new(RateLimitInfo::new());
+static IS_WIFI_CONNECTED: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
 
 fn update_task_random(_wifi: Arc<Mutex<EspWifi>>) -> ! {
     let mut rng = rand::thread_rng();
@@ -132,7 +136,7 @@ fn update_task_random(_wifi: Arc<Mutex<EspWifi>>) -> ! {
         let timestamp = timestamp_now();
         log::info!("update task: {:?} {:?}", record, timestamp);
         *LAST_RECORD.lock().unwrap() = Some((record, timestamp));
-        std::thread::sleep(Duration::from_secs(30));
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -203,6 +207,7 @@ fn update_task_cloudapi(wifi: Arc<Mutex<EspWifi>>) -> ! {
                 _ => false,
             }
         };
+        *IS_WIFI_CONNECTED.lock().unwrap() = has_network_connection;
         prev_has_network_connection = has_network_connection;
 
         if !has_network_connection {
@@ -292,22 +297,21 @@ fn ui_task(gfx: lgfx::SharedLgfxTarget) -> ! {
         let mut max_power_str = heapless::String::<16>::new();
         let mut timestamp_str = heapless::String::<32>::new();
         let mut rate_limit_str = heapless::String::<64>::new();
+        let mut wifi_connection_str = heapless::String::<16>::new();
 
         let latest = sensor_records.latest();
         if let Some((record, timestamp)) = latest {
-            use std::fmt::Write;
-            write!(&mut min_temperature_str, "{:6.1}", min.ambient_temperature).ok();
-            write!(&mut cur_temperature_str, "{:6.1}", record.ambient_temperature).ok();
-            write!(&mut max_temperature_str, "{:6.1}", max.ambient_temperature).ok();
-            write!(&mut min_humidity_str, "{:6.1}", min.relative_humidity).ok();
-            write!(&mut cur_humidity_str, "{:6.1}", record.relative_humidity).ok();
-            write!(&mut max_humidity_str, "{:6.1}", max.relative_humidity).ok();
-            write!(&mut min_power_str, "{:6.1}", min.instant_power_usage).ok();
-            write!(&mut cur_power_str, "{:6.1}", record.instant_power_usage).ok();
-            write!(&mut max_power_str, "{:6.1}", max.instant_power_usage).ok();
+            write!(&mut min_temperature_str, "{:4.1}", min.ambient_temperature).ok();
+            write!(&mut cur_temperature_str, "{:4.1}", record.ambient_temperature).ok();
+            write!(&mut max_temperature_str, "{:4.1}", max.ambient_temperature).ok();
+            write!(&mut min_humidity_str, "{:4.1}", min.relative_humidity).ok();
+            write!(&mut cur_humidity_str, "{:4.1}", record.relative_humidity).ok();
+            write!(&mut max_humidity_str, "{:4.1}", max.relative_humidity).ok();
+            write!(&mut min_power_str, "{:5.0}", min.instant_power_usage).ok();
+            write!(&mut cur_power_str, "{:5.0}", record.instant_power_usage).ok();
+            write!(&mut max_power_str, "{:5.0}", max.instant_power_usage).ok();
             write!(&mut timestamp_str, "{:?}", timestamp).ok();
         } else {
-            use std::fmt::Write;
             min_temperature_str.write_str("--").ok();
             cur_temperature_str.write_str("--").ok();
             max_temperature_str.write_str("--").ok();
@@ -320,17 +324,20 @@ fn ui_task(gfx: lgfx::SharedLgfxTarget) -> ! {
             timestamp_str.write_str("--").ok();
         }
 
+        // Draw top bar
         {
-            write!(&mut rate_limit_str, "rate limit: ").ok();
+            write!(&mut rate_limit_str, "API: ").ok();
             if let Some(limit) = rate_limit.limit {
                 if let Some(remaining) = rate_limit.remaining {
                     write!(&mut rate_limit_str, "{}/{}", remaining, limit).ok();
                 }
             }
-            if let Some(reset) = rate_limit.reset {
-                let timestamp = Timestamp::from_utc(chrono::NaiveDateTime::from_timestamp(reset as i64, 0), chrono::Utc);
-                write!(&mut rate_limit_str, " reset at: {}", timestamp.format("%Y-%m-%d %H:%M:%S"));
-            }
+            // if let Some(reset) = rate_limit.reset {
+            //     let timestamp = Timestamp::from_utc(chrono::NaiveDateTime::from_timestamp(reset as i64, 0), chrono::Utc);
+            //     write!(&mut rate_limit_str, " reset at: {}", timestamp.format("%Y-%m-%d %H:%M:%S"));
+            // }
+            write!(&mut wifi_connection_str, "WIFI: ").ok();
+            write!(&mut wifi_connection_str, "{}", if *IS_WIFI_CONNECTED.lock().unwrap() { "OK" } else { "NC" } ).ok();
         }
         {
             let mut guard = gfx.lock_without_auto_update();
@@ -340,32 +347,66 @@ fn ui_task(gfx: lgfx::SharedLgfxTarget) -> ! {
             let font_height = guard.font_height();
             let line_height = font_height * 9 / 8;
             guard.clear(lgfx::ColorRgb332::new(0xff));
-            let mut y_offset = font_height;
+            let screen_width = 960;
+            let screen_height = 540;
+            let chart_left = 300;
+            let chart_width = screen_width - chart_left;
+            // Draw TOP BAR
+            {
+                guard.fill_rect(0, 0, screen_width, font_height, background);
+                guard.draw_string(&rate_limit_str, 0, 0, background, foreground, 0.75, 0.75, textdatum_top_left);
+                guard.draw_string(&rate_limit_str, 0, 0, background, foreground, 0.75, 0.75, textdatum_top_left);
+                guard.draw_string(&wifi_connection_str, 300, 0, background, foreground, 0.75, 0.75, textdatum_top_left);
+            }
+            let chart_height = (540 - line_height) / 3;
             let value_margin_left = 20;
             let value_width = 200;
-            guard.draw_chars("Temperature:", 0, y_offset, foreground, background, 0.75, 0.75);
-            y_offset += line_height;
-            guard.draw_chars(&min_temperature_str, value_margin_left + value_width * 0, y_offset, foreground, background, 1.0, 1.0);
-            guard.draw_chars(&cur_temperature_str, value_margin_left + value_width * 1, y_offset, foreground, background, 1.0, 1.0);
-            guard.draw_chars(&max_temperature_str, value_margin_left + value_width * 2, y_offset, foreground, background, 1.0, 1.0);
-            y_offset += line_height*5/4;
-            
-            guard.draw_chars("Humidity:", 0, y_offset, foreground, background, 0.75, 0.75);
-            y_offset += line_height;
-            guard.draw_chars(&min_humidity_str, value_margin_left + value_width * 0, y_offset, foreground, background, 1.0, 1.0);
-            guard.draw_chars(&cur_humidity_str, value_margin_left + value_width * 1, y_offset, foreground, background, 1.0, 1.0);
-            guard.draw_chars(&max_humidity_str, value_margin_left + value_width * 2, y_offset, foreground, background, 1.0, 1.0);
-            y_offset += line_height*5/4;
+            {
+                let mut y_offset = font_height;
+                let mut record_iter = sensor_records.records.iter();
+                Chart::new(chart_width, chart_height, background, foreground)
+                    .draw(&mut guard, chart_left, y_offset, sensor_records.records.len(), min.ambient_temperature, max.ambient_temperature, move |_| record_iter.next().map(|item| item.ambient_temperature) )
+                    .ok();
+                guard.draw_string("Temperature:", 0, y_offset, foreground, background, 0.75, 0.75, textdatum_top_left);
+                y_offset += line_height;
+                guard.draw_string(&cur_temperature_str, value_margin_left, y_offset, foreground, background, 1.0, 1.0, textdatum_top_left);
+                y_offset += line_height;
+                guard.draw_string(&min_temperature_str, value_margin_left, y_offset, foreground, background, 0.75, 0.75, textdatum_top_left);
+                y_offset += line_height * 3 / 4;
+                guard.draw_string(&max_temperature_str, value_margin_left, y_offset, foreground, background, 0.75, 0.75, textdatum_top_left);
 
-            guard.draw_chars("Power:", 0, y_offset, foreground, background, 0.75, 0.75);
-            y_offset += line_height;
-            guard.draw_chars(&min_power_str, value_margin_left + value_width * 0, y_offset, foreground, background, 1.0, 1.0);
-            guard.draw_chars(&cur_power_str, value_margin_left + value_width * 1, y_offset, foreground, background, 1.0, 1.0);
-            guard.draw_chars(&max_power_str, value_margin_left + value_width * 2, y_offset, foreground, background, 1.0, 1.0);
+            }
+            {
+                let mut y_offset = font_height + chart_height;
+                let mut record_iter = sensor_records.records.iter();
+                Chart::new(chart_width, chart_height, background, foreground)
+                    .draw(&mut guard, chart_left, y_offset, sensor_records.records.len(), min.relative_humidity, max.relative_humidity, move |_| record_iter.next().map(|item| item.relative_humidity) )
+                    .ok();
+                guard.draw_string("Humidity:", 0, y_offset, foreground, background, 0.75, 0.75, textdatum_top_left);
+                y_offset += line_height;
+                guard.draw_string(&cur_humidity_str, value_margin_left, y_offset, foreground, background, 1.0, 1.0, textdatum_top_left);
+                y_offset += line_height;
+                guard.draw_string(&max_humidity_str, value_margin_left, y_offset, foreground, background, 0.75, 0.75, textdatum_top_left);
+                y_offset += line_height * 3 / 4;
+                guard.draw_string(&min_humidity_str, value_margin_left, y_offset, foreground, background, 0.75, 0.75, textdatum_top_left);
+            }
+            {
+                let mut y_offset = font_height + chart_height * 2;
+                let mut record_iter = sensor_records.records.iter();
+                Chart::new(chart_width, chart_height, background, foreground)
+                    .draw(&mut guard, chart_left, y_offset, sensor_records.records.len(), min.instant_power_usage, max.instant_power_usage, move |_| record_iter.next().map(|item| item.instant_power_usage) )
+                    .ok();
+                guard.draw_string("Power:", 0, y_offset, foreground, background, 0.75, 0.75, textdatum_top_left);
+                y_offset += line_height;
+                guard.draw_string(&cur_power_str, value_margin_left, y_offset, foreground, background, 1.0, 1.0, textdatum_top_left);
+                y_offset += line_height;
+                guard.draw_string(&max_power_str, value_margin_left, y_offset, foreground, background, 0.75, 0.75, textdatum_top_left);    
+                y_offset += line_height * 3 / 4;
+                guard.draw_string(&min_power_str, value_margin_left, y_offset, foreground, background, 0.75, 0.75, textdatum_top_left);
+            }
 
-            guard.draw_chars(&rate_limit_str, 0, 540 - line_height, foreground, background, 0.75, 0.75);
         }
-        std::thread::sleep(Duration::from_secs(10));
+        std::thread::sleep(Duration::from_secs(30));
     }
 }
 
@@ -393,6 +434,7 @@ fn main() -> anyhow::Result<()> {
     }
     #[cfg(target_os="linux")]
     {
+        env_logger::init();
         *GFX.lock().unwrap() = Some(Gfx::setup(960, 540).unwrap());
     }
     
@@ -441,6 +483,7 @@ fn main() -> anyhow::Result<()> {
         .name("UPDATE".into())
         .stack_size(10*1024)
         .spawn(|| update_task_cloudapi(wifi))
+        //.spawn(|| update_task_random(wifi))
         .expect("Failed to launch UPDATE task");
     #[cfg(target_os="linux")]
     loop { 
