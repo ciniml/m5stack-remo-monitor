@@ -1,3 +1,12 @@
 [submodule "LovyanGFX"]
 	path = LovyanGFX
 	url = https://github.com/Lovyan03/LovyanGFX
+[submodule "remo-api"]
+	path = remo-api
+	url = https://github.com/ciniml/remo-api
+[submodule "lgfx-rs"]
+	path = lgfx-rs
+	url = https://github.com/ciniml/lgfx-rs
+[submodule "embedded-io"]
+	path = embedded-io
+	url = https://github.com/ciniml/embedded-io

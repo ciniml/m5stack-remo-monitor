@@ -22,14 +22,14 @@ embedded-graphics = "0.7.1"
 embedded-hal = "=1.0.0-alpha.8"
 log = "0.4.17"
 num_enum = "0.5.7"
-lgfx = { path = "lgfx" }
+lgfx = { path = "lgfx-rs" }
 heapless = { version = "0.7.16", features = ["serde"] }
 rand = "0.8.5"
 
 chrono = { version = "0.4.22", default-features = false, features = ["clock", "serde"] }
 uuid = { version = "1.2.1", features = ["serde"] }
 remo-api = {path = "remo-api"}
-embedded-io = "0.3.0"
+embedded-io = "0.3.1"
 
 [target.'cfg(target_os="espidf")'.dependencies]
 embedded-svc = {version = "0.22.1", features = ["experimental"]}
