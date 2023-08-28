@@ -1,0 +1,8 @@
+use uuid::{uuid, Uuid};
+
+pub const WIFI_AP: &str = "wifi ap";
+pub const WIFI_PASS: &str = "wifi pass";
+pub const ACCESS_TOKEN: &str = "cloud api access token";
+
+pub const SENSOR_REMO_DEVICE_ID: Uuid  = uuid!("sensor remo device id");
+pub const ECHONETLITE_APPLIANCE_ID: Uuid = uuid!("echonet lite appliance id");
