@@ -7,7 +7,7 @@ target = "xtensa-esp32-espidf"
 
 [target.xtensa-esp32-espidf]
 linker = "ldproxy"
-runner = "espflash --use-stub --speed 1500000 --monitor-speed 115200 --monitor /dev/ttyUSB1"
+runner = "espflash flash --baud 1500000 --monitor-baud 115200 --monitor"
 
 [target.xtensa-esp32s2-espidf]
 linker = "ldproxy"
