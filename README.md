@@ -5,6 +5,8 @@
 M5StackのEInkディスプレイ付き無線通信ユニット M5Paper を使った、Nature Remoシリーズのセンサ・データ表示器です。
 Nature Remo3の温度・湿度センサ、およびNature Remo E (Lite)が計測しているスマートメーターの瞬時電力情報を、Nature Remo Cloud API経由で取得し表示します。
 
+![画面](./doc/display.drawio.svg)
+
 ## システム構成
 
 ![システム構成](./doc/system.drawio.svg)
