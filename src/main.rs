@@ -4,9 +4,9 @@ pub mod comm_esp;
 #[cfg(target_os="espidf")]
 mod espidf_imports {
     pub use super::comm_esp::*;
-    pub use embedded_svc::{wifi::{ClientConnectionStatus, ClientIpStatus, ClientStatus, Wifi}, timer::{TimerService, PeriodicTimer}, http::client::Response};
+    pub use embedded_svc::{wifi::*, timer::*, http::client::Response};
     pub use esp_idf_hal::prelude::Peripherals;
-    pub use esp_idf_svc::{netif::EspNetifStack, wifi::EspWifi, timer::{EspTimerService, EspTaskTimerService, EspTimer}};
+    pub use esp_idf_svc::{netif::*, wifi::*, timer::*, nvs::*, eventloop::EspSystemEventLoop};
     pub use esp_idf_sys as _; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
     pub use embedded_svc::http::Headers;
 }
@@ -18,7 +18,7 @@ mod comm_linux;
 #[cfg(target_os="linux")]
 use comm_linux::*;
 
-use std::{sync::{Arc, Mutex}, time::Duration, str::FromStr, fmt::Write};
+use std::{sync::{Arc, Mutex}, time::Duration, str::FromStr, fmt::Write, ffi::CStr};
 
 use anyhow::anyhow;
 use embedded_io::blocking::Read;
@@ -41,13 +41,59 @@ use crate::lgfx::{EpdMode, DrawChars, FontManupulation, LgfxDisplay};
 const MAX_DEVICES: usize = 32;
 const MAX_APPLIANCES: usize = 16;
 
-use remo_api::{Device, read_devices, DeviceSubNode, NewestEvents, EchonetLiteProperty, Appliance, read_appliances, ApplianceSubNode};
+use fuga_remo_api::{Device, read_devices, DeviceSubNode, NewestEvents, EchonetLiteProperty, Appliance, read_appliances, ApplianceSubNode, ParserOptions};
 
 mod config;
 use config::*;
 
 mod chart;
 use chart::Chart;
+
+#[derive(Default, Debug)]
+struct Config {
+    wifi_ssid: heapless::String<32>,
+    wifi_password: heapless::String<64>,
+    device_id: Uuid,
+    appliance_id: Uuid,
+    access_token: heapless::String<128>,
+}
+
+static CONFIG: Mutex<Option<Config>> = Mutex::new(None);
+
+#[cfg(target_os="espidf")]
+fn init_config() {
+    let mut config = Config::default();
+    let nvs_partition = EspDefaultNvsPartition::take().unwrap();
+    {
+        let nvs_partition = nvs_partition.clone();
+        let nvs = EspDefaultNvs::new(nvs_partition, "wifi", false).unwrap();
+        let mut buffer = [0u8; 128];
+        config.wifi_ssid = heapless::String::from_str(nvs.get_str("ssid", &mut buffer).unwrap().unwrap_or("")).unwrap();
+        config.wifi_password = heapless::String::from_str(nvs.get_str("pass", &mut buffer).unwrap().unwrap_or("")).unwrap();
+    }
+    {
+        let nvs_partition = nvs_partition.clone();
+        let nvs = EspDefaultNvs::new(nvs_partition, "device", false).unwrap();
+        let mut buffer = [0u8; 128];
+        config.device_id = Uuid::from_str(nvs.get_str("device_id", &mut buffer).unwrap().unwrap_or("")).unwrap_or_default();
+        config.appliance_id = Uuid::from_str(nvs.get_str("appliance_id", &mut buffer).unwrap().unwrap_or("")).unwrap_or_default();
+        config.access_token = heapless::String::from_str(nvs.get_str("access_token", &mut buffer).unwrap().unwrap_or("")).unwrap();
+    }
+    log::info!("init_config {:?}", config);
+    *CONFIG.lock().unwrap() = Some(config);
+}
+#[cfg(target_os="linux")]
+fn init_config() {
+    let config = Config {
+        wifi_ssid: heapless::String::from_str(config::WIFI_AP).unwrap(),
+        wifi_password: heapless::String::from_str(config::WIFI_PASS).unwrap(),
+        device_id: config::SENSOR_REMO_DEVICE_ID,
+        appliance_id: config::ECHONETLITE_APPLIANCE_ID,
+        access_token: heapless::String::from_str(config::ACCESS_TOKEN).unwrap(),
+    };
+    log::info!("init_config {:?}", config);
+    *CONFIG.lock().unwrap() = Some(config);
+}
 
 #[derive(Clone, Copy, Debug)]
 struct SensorRecord
@@ -171,40 +217,50 @@ fn fetch_remo_sensor_data() -> anyhow::Result<(SensorRecord, Timestamp, RateLimi
     Ok((record, timestamp, rate_limit))
 }
 
-fn update_task_cloudapi(wifi: Arc<Mutex<EspWifi>>) -> ! {
+fn update_task_cloudapi(wifi: Arc<Mutex<EspWifi>>, wifi_wait: WifiWait) -> ! {
     let mut prev_has_network_connection = false;
+
     loop {
         let has_network_connection = {
-            log::info!("Waiting WiFi lock...");
-            let wifi = wifi.lock().unwrap();
-            log::info!("Waiting WiFi gets non-transitional state...");
-            let result = wifi.wait_status_with_timeout(Duration::from_secs(10), |status| !status.is_transitional());
-            log::info!("WiFi gots non-transitional state - {:?}", result);
-
-            match wifi.get_status().0 {
-                ClientStatus::Started(connection_status) => {
-                    match connection_status {
-                        ClientConnectionStatus::Connected(ip_status) => {
-                            match ip_status {
-                                ClientIpStatus::Done(settings) => {
-                                    if !prev_has_network_connection {
-                                        log::info!("Got IP address: {:?}", settings)
-                                    }
-                                    true
-                                },
-                                _ => false,
-                            }
+            let mut wifi = wifi.lock().unwrap();
+            if wifi.is_connected().unwrap_or(false) {
+                true
+            } else {
+                let is_started = if !wifi.is_started().unwrap_or(false) {
+                    log::info!("Starting WiFi...");
+                    match wifi.start() {
+                        Ok(_) => {
+                            log::info!("Waiting WiFi starts...");
+                            wifi_wait.wait_with_timeout(Duration::from_secs(10), || wifi.is_started().unwrap_or(false))
                         },
-                        ClientConnectionStatus::Disconnected => {
-                            if prev_has_network_connection {
-                                log::info!("Disconnected from AP");
-                            }
+                        Err(err) => {
+                            log::error!("Failed to start WiFi - {:?}", err);
                             false
                         },
-                        _ => false,
                     }
-                },
-                _ => false,
+                } else {
+                    true
+                };
+                if is_started {
+                    log::info!("Waiting WiFi gets connected...");
+                    if !wifi.is_connected().unwrap_or(false) {
+                        log::info!("Connectting WiFi...");
+                        match wifi.connect() {
+                            Ok(_) => {
+                                log::info!("Waiting WiFi connection...");
+                                wifi_wait.wait_with_timeout(Duration::from_secs(10), || wifi.is_connected().unwrap_or(false))
+                            },
+                            Err(err) => {
+                                log::error!("Failed to connect WiFi - {:?}", err);
+                                false
+                            },
+                        }
+                    } else {
+                        true
+                    }
+                } else {
+                    false
+                }
             }
         };
         *IS_WIFI_CONNECTED.lock().unwrap() = has_network_connection;
@@ -437,8 +493,12 @@ fn main() -> anyhow::Result<()> {
         env_logger::init();
         *GFX.lock().unwrap() = Some(Gfx::setup(960, 540).unwrap());
     }
-    
-    std::thread::spawn(|| {
+
+    // Initialize configuration.
+    init_config();
+    log::info!("CONFIG: {:?}", CONFIG.lock().unwrap().as_ref().unwrap());
+
+    std::thread::Builder::new().stack_size(8192).spawn(|| {
         let guard = GFX.lock().unwrap();
         let gfx_shared = guard.as_ref().unwrap().as_shared();
         ui_task(gfx_shared);
@@ -450,39 +510,45 @@ fn main() -> anyhow::Result<()> {
     
     // Initialize WiFi
     #[cfg(target_os="espidf")]
-    let wifi = {
-        let _peripherals = Peripherals::take().unwrap();
-        let netif_stack = Arc::new(EspNetifStack::new()?);
-        let sys_loop_stack = Arc::new(esp_idf_svc::sysloop::EspSysLoopStack::new()?);
-        let default_nvs = Arc::new(esp_idf_svc::nvs::EspDefaultNvs::new()?);
+    let (wifi, wifi_wait) = {
+        let peripherals = Peripherals::take().unwrap();
+        let sysloop = esp_idf_svc::eventloop::EspSystemEventLoop::take()?;
 
         let wifi = Arc::new(Mutex::new(EspWifi::new(
-            netif_stack.clone(),
-            sys_loop_stack.clone(),
-            default_nvs.clone(),
+            peripherals.modem,
+            sysloop.clone(),
+            None,
         )?));
         {
             log::info!("Configuring Wi-Fi");
+            let (ssid, pass) = {
+                let guard = CONFIG.lock().unwrap();
+                let config = guard.as_ref().unwrap();
+                (config.wifi_ssid.clone(), config.wifi_password.clone())
+            };
             let mut wifi = wifi.lock().unwrap();
             wifi.set_configuration(&embedded_svc::wifi::Configuration::Client(
                 embedded_svc::wifi::ClientConfiguration {
-                    ssid: WIFI_AP.into(),
-                    password: WIFI_PASS.into(),
+                    ssid: ssid.into(),
+                    password: pass.into(),
                     channel: None,
                     ..Default::default()
                 },
             ))?;
         }
-        wifi
+
+        let wifi_wait = WifiWait::new(&sysloop)?;
+        (wifi, wifi_wait)
     };
     #[cfg(target_os="linux")]
-    let wifi = Arc::new(Mutex::new(EspWifi{}));
-
+    let (wifi, wifi_wait) = {
+        (Arc::new(Mutex::new(EspWifi{})), WifiWait {})
+    };
     log::info!("Starting update task...");
     std::thread::Builder::new()
         .name("UPDATE".into())
-        .stack_size(10*1024)
-        .spawn(|| update_task_cloudapi(wifi))
+        .stack_size(15*1024)
+        .spawn(|| update_task_cloudapi(wifi, wifi_wait))
         //.spawn(|| update_task_random(wifi))
         .expect("Failed to launch UPDATE task");
     #[cfg(target_os="linux")]
@@ -493,15 +559,15 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub const ACCESS_TOKEN_BEARER_LENGTH: usize = "Bearer ".len() + ACCESS_TOKEN.len();
-
 fn get_target_device() -> anyhow::Result<((Option<Device>, Option<NewestEvents>), RateLimitInfo)> {
-    fetch_http_and_parse("https://api.nature.global/1/devices", |mut response| {
-        let content_length = response.content_len();
+    let sensor_remo_device_id = CONFIG.lock().unwrap().as_ref().unwrap().device_id;
+    let access_token = CONFIG.lock().unwrap().as_ref().unwrap().access_token.clone();
+    fetch_http_and_parse("https://api.nature.global/1/devices", access_token.as_str(),|mut response| {
+        let content_length = response.content_len().map(|n| n as usize);
         let mut target_device: Option<Device> = None;
         let mut target_device_newest_events: Option<NewestEvents> = None;
-        read_devices(&mut &mut response, content_length, |device, sub_node| {
-            if device.id == config::SENSOR_REMO_DEVICE_ID {
+        read_devices(&mut &mut response, content_length, &ParserOptions::default(), |device, sub_node| {
+            if device.id == sensor_remo_device_id {
                 target_device = Some(device.clone());
                 if let Some(DeviceSubNode::NewestEvents(newest_events)) = sub_node {
                     target_device_newest_events = Some(newest_events.clone());
@@ -514,20 +580,22 @@ fn get_target_device() -> anyhow::Result<((Option<Device>, Option<NewestEvents>)
     })
 }
 fn get_target_appliance() -> anyhow::Result<((Option<Appliance>, Vec<EchonetLiteProperty, 10>), RateLimitInfo)> {
-    fetch_http_and_parse("https://api.nature.global/1/appliances", |mut response| {
-        let content_length = response.content_len();
+    let echonetlite_appliance_id = CONFIG.lock().unwrap().as_ref().unwrap().appliance_id;
+    let access_token = CONFIG.lock().unwrap().as_ref().unwrap().access_token.clone();
+    fetch_http_and_parse("https://api.nature.global/1/appliances", access_token.as_str(),|mut response| {
+        let content_length = response.content_len().map(|n| n as usize);
         let mut target_appliance: Option<Appliance> = None;
         let mut properties = Vec::new();
-        read_appliances(&mut &mut response, content_length, |appliance, sub_node| {
+        read_appliances(&mut &mut response, content_length, &ParserOptions::default(), |appliance, sub_node| {
             //log::info!("read_appliances: {:?} {:?}", appliance, sub_node);
-            if appliance.id == config::ECHONETLITE_APPLIANCE_ID {
+            if appliance.id == echonetlite_appliance_id {
                 target_appliance = Some(appliance.clone());
                 if let Some(ApplianceSubNode::EchonetLiteProperty(property)) = sub_node {
                     properties.push(property.clone());
                 }
             }
         })
-        .map_err(|_| anyhow!("JSON parse error"))?;
+        .map_err(|err| anyhow!("JSON parse error - {:?}", err))?;
         Ok((target_appliance, properties))
     })
 }

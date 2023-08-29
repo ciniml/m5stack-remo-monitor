@@ -11,7 +11,7 @@ fn build_lgfx_linux() -> anyhow::Result<()> {
         .flag("-v")
         .flag("-g")
         .flag("-DLGFX_SDL")
-        .file("lgfx/lgfx_c/lgfx_c.cpp")
+        .file("lgfx-rs/lgfx_c/lgfx_c.cpp")
         .include("lgfx/lgfx_c")
         .include("LovyanGFX/src")
         .include("/usr/include/x86_64-linux-gnu")

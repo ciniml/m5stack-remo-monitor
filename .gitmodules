@@ -10,3 +10,6 @@
 [submodule "embedded-io"]
 	path = embedded-io
 	url = https://github.com/ciniml/embedded-io
+[submodule "esp-idf-svc"]
+	path = esp-idf-svc
+	url = https://github.com/esp-rs/esp-idf-svc

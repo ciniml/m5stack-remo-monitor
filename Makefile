@@ -3,10 +3,10 @@
 all: build-device
 
 build-device:
-	cargo build
+	cargo build --release
 
 run-device:
-	cargo run
+	cargo run --release
 
 build-linux:
 	cargo +stable build --target x86_64-unknown-linux-gnu

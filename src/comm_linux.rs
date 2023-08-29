@@ -1,9 +1,15 @@
 use std::{fmt::Write, io::Read, time::{Duration, Instant}, thread::JoinHandle, sync::{Arc, Mutex, Condvar}};
 
-use crate::{RateLimitInfo, ACCESS_TOKEN_BEARER_LENGTH, config::ACCESS_TOKEN};
+use crate::{RateLimitInfo, config::ACCESS_TOKEN};
+
+pub const MAX_ACCESS_TOKEN_LEN: usize = 128;
+pub const ACCESS_TOKEN_BEARER_LENGTH: usize = "Bearer ".len() + MAX_ACCESS_TOKEN_LEN;
 
 /// Dummy implementation of EspWifi
 pub struct EspWifi {}
+
+#[derive(Debug)]
+pub enum EspError {}
 
 #[derive(Clone, Copy, Debug)]
 pub struct IpSettings {}
@@ -25,12 +31,15 @@ impl ClientStatus {
 }
 
 impl EspWifi {
-    pub fn get_status(&self) -> (ClientStatus, ()) {
-        (ClientStatus::Started(ClientConnectionStatus::Connected(ClientIpStatus::Done(IpSettings{}))), ())
-    }
-    pub fn wait_status_with_timeout<F: FnOnce(ClientStatus) -> bool>(&self, _duration: Duration, _filter: F) -> ClientStatus {
-        self.get_status().0
-    }
+    pub fn start(&self) -> Result<(), EspError> { Ok(()) }
+    pub fn connect(&self) -> Result<(), EspError> { Ok(()) }
+    pub fn is_started(&self) -> anyhow::Result<bool> { Ok(true) }
+    pub fn is_connected(&self) -> anyhow::Result<bool> { Ok(true) }
+}
+
+pub struct WifiWait {}
+impl WifiWait {
+    pub fn wait_with_timeout<F: Fn() -> bool>(&self, duration: Duration, predicate: F) -> bool { predicate() }
 }
 
 pub struct HttpResponse<'a> {
@@ -64,7 +73,7 @@ impl<'a> From<&'a mut reqwest::blocking::Response> for HttpResponse<'a> {
     }
 }
 
-pub fn fetch_http_and_parse<F, ParserResult>(url: &str, mut response_parser: F) -> anyhow::Result<(ParserResult, RateLimitInfo)> 
+pub fn fetch_http_and_parse<F, ParserResult>(url: &str, access_token: &str, mut response_parser: F) -> anyhow::Result<(ParserResult, RateLimitInfo)> 
     where F: for <'a> FnMut(HttpResponse<'a>) -> anyhow::Result<ParserResult>
 {
     let mut access_token = heapless::String::<ACCESS_TOKEN_BEARER_LENGTH>::new();
@@ -84,7 +93,6 @@ pub fn fetch_http_and_parse<F, ParserResult>(url: &str, mut response_parser: F) 
         remaining: response.headers().get("x-rate-limit-remaining").and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok()),
         reset: response.headers().get("x-rate-limit-reset").and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok()),
     };
-    let hoge: Option<&str> = None;
     let result = response_parser(HttpResponse::from(&mut response))?;
     Ok((result, rate_limit))
 }

@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Kenta IDA <fuga@fugafuga.org>"]
 edition = "2021"
 resolver = "2"
+license = "MIT"
+description = "M5Stack Monitor for Nature Remo series (unofficial)"
+repository = "https://github.com/ciniml/m5stack-remo-monitor"
 
 [profile.release]
 opt-level = "s"
@@ -19,7 +22,7 @@ opt-level = "z"
 anyhow = "1"
 #attohttpc = {version = "0.22.0", default-features = false, features = []}
 embedded-graphics = "0.7.1"
-embedded-hal = "=1.0.0-alpha.8"
+embedded-hal = "=1.0.0-alpha.9"
 log = "0.4.17"
 num_enum = "0.5.7"
 lgfx = { path = "lgfx-rs" }
@@ -28,14 +31,15 @@ rand = "0.8.5"
 
 chrono = { version = "0.4.22", default-features = false, features = ["clock", "serde"] }
 uuid = { version = "1.2.1", features = ["serde"] }
-remo-api = {path = "remo-api"}
+fuga-remo-api = {path = "remo-api"}
 embedded-io = "0.3.1"
 
 [target.'cfg(target_os="espidf")'.dependencies]
-embedded-svc = {version = "0.22.1", features = ["experimental"]}
-esp-idf-hal = "0.38.1"
-esp-idf-svc = { version = "0.42.3", features = ["experimental"]}
-esp-idf-sys = { version = "0.31.9", features = ["binstart"] }
+embedded-svc = {version = "0.24", features = ["experimental"]}
+esp-idf-hal = "0.40"
+#esp-idf-svc = { version = "0.45", features = ["experimental"]}
+esp-idf-svc = { path = "esp-idf-svc", features = ["experimental"]}
+esp-idf-sys = { version = "0.32", features = ["binstart"] }
 
 [target.'cfg(target_os="linux")'.dependencies]
 reqwest = { version = "0.11.13", features = ["blocking"] }
@@ -54,5 +58,7 @@ embedded-io = { path = "./embedded-io" }
 
 [package.metadata.esp-idf-sys]
 extra_components = [
-    { component_dirs = [ "lgfx/lgfx_c", "LovyanGFX" ] },
+    { component_dirs = [ "lgfx-rs/lgfx_c", "LovyanGFX" ] },
 ]
+#esp_idf_tools_install_dir = "workspace"
+#esp_idf_components = ["pthread", "wifi"]
